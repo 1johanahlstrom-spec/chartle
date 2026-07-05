@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chartle — dagens chart-pussel</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+  <header>
+    <h1>📊 Chartle <span id="puzzle-no"></span></h1>
+    <div id="streak" title="Streak">🔥 0</div>
+  </header>
+
+  <p id="tagline">60 dagar. Ett beslut. Long, short eller avstå?</p>
+
+  <div id="chart"></div>
+
+  <section id="controls">
+    <div id="stop-row">
+      <span>Stop:</span>
+      <button class="stop-btn" data-stop="2">2%</button>
+      <button class="stop-btn selected" data-stop="5">5%</button>
+      <button class="stop-btn" data-stop="8">8%</button>
+    </div>
+    <div id="decision-row">
+      <button id="btn-long" class="decision">📈 Long</button>
+      <button id="btn-pass" class="decision">🤚 Avstå</button>
+      <button id="btn-short" class="decision">📉 Short</button>
+    </div>
+  </section>
+
+  <section id="result" class="hidden">
+    <div id="result-score"></div>
+    <div id="result-facit"></div>
+    <div id="result-buttons">
+      <button id="btn-share">Dela resultat</button>
+    </div>
+    <div id="share-feedback"></div>
+    <p id="comeback">Nytt pussel imorgon! 🌅</p>
+  </section>
+
+  <footer>
+    <p>Historisk data · inget av detta är finansiell rådgivning</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
