@@ -21,6 +21,10 @@ själva spelet; valfri Supabase-leaderboard. Full beskrivning i README.md.
   hänger sig på ~1800 filer. `docs/.nojekyll` ska också ligga kvar.
 - **Priser i pussel-JSON är normaliserade**: sista synliga close = 100.
   All poänglogik (R-multiplar, stops) i `app.js` bygger på det.
+- **MA10/MA20 räknas klientsidan** i `app.js` (`sma()`), inte i pusseldatan.
+  Måste beräknas på `puzzle.c.slice(0, n)` — aldrig hela serien — annars läcker
+  medelvärdet framtida candles under de 10 utspelningsdagarna. Första
+  (period-1) punkterna är `null` så Plotly inte ritar en ofullständig linje.
 - **Facit är base64-kodat** i `meta`-fältet — medveten lätt obfuskering,
   ingen säkerhet.
 - **localStorage-schema** versioneras med `state.v` (nu 2). Bumpa versionen

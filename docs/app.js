@@ -57,7 +57,11 @@ const CHART_LAYOUT = {
   plot_bgcolor: "#1a2029",
   font: { color: "#8b95a3", size: 11 },
   margin: { l: 44, r: 10, t: 10, b: 20 },
-  showlegend: false,
+  showlegend: true,
+  legend: {
+    x: 0, y: 1, xanchor: "left", yanchor: "top", orientation: "h",
+    font: { size: 10 }, bgcolor: "rgba(0,0,0,0)",
+  },
   dragmode: false,
   xaxis: {
     rangeslider: { visible: false },
@@ -71,21 +75,46 @@ const CHART_LAYOUT = {
   shapes: [],
 };
 
+// Glidande medelvärde (SMA) på close. Beräknas på de redan visade candlesen —
+// aldrig på framtida data — så inget läcker under utspelningen. De första
+// (period-1) punkterna blir null → Plotly ritar ingen linje där.
+function sma(closes, period) {
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i];
+    if (i >= period) sum -= closes[i - period];
+    out.push(i >= period - 1 ? sum / period : null);
+  }
+  return out;
+}
+
 function traces(n) {
   const idx = [...Array(n).keys()];
+  const closes = puzzle.c.slice(0, n);
   return [
     {
       type: "candlestick", x: idx,
       open: puzzle.o.slice(0, n), high: puzzle.h.slice(0, n),
-      low: puzzle.l.slice(0, n), close: puzzle.c.slice(0, n),
+      low: puzzle.l.slice(0, n), close: closes,
       increasing: { line: { color: "#26a69a", width: 1 }, fillcolor: "#26a69a" },
       decreasing: { line: { color: "#ef5350", width: 1 }, fillcolor: "#ef5350" },
-      hoverinfo: "none",
+      hoverinfo: "none", showlegend: false,
     },
     {
       type: "bar", x: idx, y: puzzle.v.slice(0, n), yaxis: "y2",
       marker: { color: idx.map(i => puzzle.c[i] >= puzzle.o[i] ? "#26a69a88" : "#ef535088") },
-      hoverinfo: "none",
+      hoverinfo: "none", showlegend: false,
+    },
+    {
+      type: "scatter", mode: "lines", x: idx, y: sma(closes, 10),
+      line: { color: "#4a9eff", width: 1.3 }, name: "MA10",
+      hoverinfo: "none", connectgaps: false,
+    },
+    {
+      type: "scatter", mode: "lines", x: idx, y: sma(closes, 20),
+      line: { color: "#f5b544", width: 1.3 }, name: "MA20",
+      hoverinfo: "none", connectgaps: false,
     },
   ];
 }
