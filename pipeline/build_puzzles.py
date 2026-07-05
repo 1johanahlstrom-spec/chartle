@@ -21,6 +21,11 @@ WINDOW = VISIBLE + OUTCOME
 STRIDE = 10           # testa nytt kandidatfönster var 10:e dag
 MIN_GAP = 25          # min avstånd mellan valda fönster i samma ticker
 MAX_PER_TICKER = 45
+MAX_FLAT = 0.25       # max andel platta candles (high==low) i synligt fönster
+MIN_LEVELS = 25       # min distinkta prisnivåer i synligt fönster (likviditet)
+# Tak per (label, år): hindrar att ett enda kraschår (1973, 1987, 2000, 2020)
+# äter hela budgeten så att urvalet sprids över alla decennier 1962-2024.
+MAX_PER_YEAR = {"long": 40, "short": 30, "neutral": 40}
 TARGETS = {"long": 750, "short": 450, "neutral": 625}  # 1825 = 5 pussel/dag i 365 dagar
 
 data = pd.read_pickle("rawdata.pkl")
@@ -39,7 +44,15 @@ for ticker in tickers:
         vis_h, vis_l = h[i:i + VISIBLE], l[i:i + VISIBLE]
         entry = c[i + VISIBLE - 1]
         final = c[i + WINDOW - 1]
-        if entry < 2 or min(l[i:i + WINDOW]) <= 0 or v[i:i + VISIBLE].max() == 0:
+        # Era-oberoende likviditetsfilter: priser är justerade (gamla blue chips
+        # landar på ören efter split/utdelning), så inget absolut prisgolv. Vi
+        # filtrerar istället bort trasig/steppig/illikvid data — platta candles,
+        # nollvolym och för få distinkta prisnivåer (fångar både gamla illikvida
+        # blue chips och moderna penny-stocks som CELH/SPCE).
+        flat_frac = (vis_h == vis_l).mean()
+        levels = len({round(float(x) / entry * 100, 2) for x in c[i:i + VISIBLE]})
+        if (min(l[i:i + WINDOW]) <= 0 or v[i:i + VISIBLE].max() == 0
+                or flat_frac > MAX_FLAT or levels < MIN_LEVELS):
             continue
         # Kräv sammanhängande handel: inga stora datumhål (halter/dålig data)
         span = (dates[i + WINDOW - 1] - dates[i]).days
@@ -69,6 +82,7 @@ for ticker in tickers:
 
         candidates.append({
             "ticker": ticker, "i": i, "label": label, "quality": quality,
+            "year": dates[i + VISIBLE - 1].year,
             "start": str(dates[i].date()),
             "decision": str(dates[i + VISIBLE - 1].date()),
             "end": str(dates[i + WINDOW - 1].date()),
@@ -80,12 +94,14 @@ print(f"Kandidater totalt: {len(candidates)}")
 for lbl in TARGETS:
     print(f"  {lbl}: {sum(1 for x in candidates if x['label'] == lbl)}")
 
-# Greedy-urval: bäst kvalitet först, med tak per ticker och inget fönsteröverlapp
+# Greedy-urval: bäst kvalitet först, med tak per ticker, tak per år (decennie-
+# spridning) och inget fönsteröverlapp inom samma ticker.
 chosen = []
 per_ticker = {t: [] for t in tickers}
 for lbl, target in TARGETS.items():
     pool = sorted((x for x in candidates if x["label"] == lbl),
                   key=lambda x: -x["quality"])
+    per_year = {}
     count = 0
     for cand in pool:
         if count >= target:
@@ -93,9 +109,12 @@ for lbl, target in TARGETS.items():
         used = per_ticker[cand["ticker"]]
         if len(used) >= MAX_PER_TICKER:
             continue
+        if per_year.get(cand["year"], 0) >= MAX_PER_YEAR[lbl]:
+            continue
         if any(abs(cand["i"] - j) < MIN_GAP for j in used):
             continue
         used.append(cand["i"])
+        per_year[cand["year"]] = per_year.get(cand["year"], 0) + 1
         chosen.append(cand)
         count += 1
     print(f"Valda {lbl}: {count}/{target}")

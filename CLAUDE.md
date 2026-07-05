@@ -28,6 +28,17 @@ själva spelet; valfri Supabase-leaderboard. Full beskrivning i README.md.
 - **Avnoterade tickers**: yfinance tappar historik när bolag avnoteras
   (WBA → ersatt med KHC, SQ → XYZ). Kör om `fetch_data.py` med ersättare om
   fler försvinner.
+- **Dataspann 1962–2024**: yfinance har daglig OHLC från **1962-01-02** för
+  klassiska blue chips — allt äldre (30/40/50-tal) finns bara i betalkällor.
+  85 tickers, varav de långlivade (kategorierna `classic` + `techclassic`)
+  bidrar med vintage-chart. Moderna tickers returnerar automatiskt bara sin
+  nutida historik.
+- **INGET absolut prisgolv i urvalet**: priser är split/utdelningsjusterade,
+  så gamla blue chips landar på ören (IBM 1962 ≈ $1.44). Det gamla
+  `entry < 2`-filtret hade raderat hela 60-talet. Ersatt av era-oberoende
+  likviditetsfilter i `build_puzzles.py` (`MIN_LEVELS` distinkta prisnivåer +
+  `MAX_FLAT` platta candles) som fångar både gammalt illikvitt och moderna
+  penny-stocks (CELH, SPCE). `MAX_PER_YEAR` sprider urvalet över decennierna.
 - Repo-ägare: `1johanahlstrom-spec`, sajt:
   https://1johanahlstrom-spec.github.io/chartle/
 

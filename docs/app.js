@@ -135,6 +135,8 @@ const CATEGORY_LABEL = {
   parabolic: "parabolic-kandidat",
   boring: "stabilt tråkbolag",
   decliners: "strukturell förlorare",
+  classic: "klassiskt blue chip",
+  techclassic: "tech-veteran",
 };
 
 function fmtR(r) {
