@@ -3,6 +3,8 @@
 Alla spelare får samma anonymiserade historiska dagscharts (ticker och datum dolda).
 Du ser 60 candlesticks, väljer **Long / Short / Avstå** (+ valfri stop-nivå),
 och charten spelas fram 10 dagar. Poäng = R-multipel av utfallet.
+Charterna spänner **1962–2024** — allt från 70-talets björnmarknad och Black
+Monday 1987 till dot-com och 2020-talet.
 **5 rundor per dag**, samma för alla, delbart resultat à la Wordle
 (`Chartle #12 🟩🟥⬜🟩🟩 +4.2R`) och leaderboard med dagstopp + totalställning.
 
@@ -10,13 +12,13 @@ och charten spelas fram 10 dagar. Poäng = R-multipel av utfallet.
 
 ```
 pipeline/           Python-skript som byggs körs EN gång lokalt
-  fetch_data.py     Steg 1: hämtar dagsdata 2015–2024 för 50 tickers (yfinance)
-  build_puzzles.py  Steg 2–4: väljer 365 fönster, normaliserar, skriver JSON
+  fetch_data.py     Steg 1: hämtar dagsdata 1962–2024 för 85 tickers (yfinance)
+  build_puzzles.py  Steg 2–4: väljer 1825 fönster, normaliserar, skriver JSON
 docs/                Hela spelet — statiska filer, ingen backend
   index.html
   style.css
   app.js
-  puzzles/          365 st JSON-filer (~2,4 kB styck, 875 kB totalt)
+  puzzles/          1825 st JSON-filer (~2,4 kB styck, ~4,3 MB totalt)
 ```
 
 ## Köra lokalt
