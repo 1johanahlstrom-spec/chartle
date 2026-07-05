@@ -1,8 +1,9 @@
 # 📊 Chartle — dagens chart-pussel
 
 Alla spelare får samma anonymiserade historiska dagscharts (ticker och datum dolda).
-Du ser 60 candlesticks, väljer **Long / Short / Avstå** (+ valfri stop-nivå),
-och charten spelas fram 10 dagar. Poäng = R-multipel av utfallet.
+Du ser 60 candlesticks med **10- och 20-dagars glidande medelvärde** (MA10/MA20),
+väljer **Long / Short / Avstå** (+ valfri stop-nivå), och charten spelas fram
+10 dagar. Poäng = R-multipel av utfallet.
 Charterna spänner **1962–2024** — allt från 70-talets björnmarknad och Black
 Monday 1987 till dot-com och 2020-talet.
 **5 rundor per dag**, samma för alla, delbart resultat à la Wordle
