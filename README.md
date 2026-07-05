@@ -78,7 +78,14 @@ Poäng skickas in en gång per dag efter femte rundan.
 
 ## Publicera
 
-Sajten serveras från `docs/` på main via GitHub Pages — varje push deployar.
+Sajten deployas till GitHub Pages via GitHub Actions
+(`.github/workflows/pages.yml`): varje push till `main` laddar upp `docs/`
+som Pages-artefakt och deployar — klart på under en minut.
+
+Obs: den klassiska Jekyll-baserade Pages-kedjan (deploy from branch) klarade
+inte repots ~1800 pusselfiler — bygget fastnade/felade. Därför är Pages
+konfigurerat med `build_type=workflow`. Ändra inte tillbaka till
+branch-deploy i repo-inställningarna.
 
 ## Senare
 
