@@ -10,10 +10,13 @@
 <body>
   <header>
     <h1>📊 Chartle <span id="puzzle-no"></span></h1>
-    <div id="streak" title="Streak">🔥 0</div>
+    <div id="header-stats">
+      <span id="total-r" title="Totalpoäng">Σ 0R</span>
+      <span id="streak" title="Streak">🔥 0</span>
+    </div>
   </header>
 
-  <p id="tagline">60 dagar. Ett beslut. Long, short eller avstå?</p>
+  <p id="tagline">Runda <span id="round-no">1</span> av 5 · Dagens poäng: <span id="day-r">0R</span></p>
 
   <div id="chart"></div>
 
@@ -31,20 +34,43 @@
     </div>
   </section>
 
-  <section id="result" class="hidden">
+  <section id="round-result" class="hidden">
     <div id="result-score"></div>
     <div id="result-facit"></div>
+    <button id="btn-next">Nästa chart →</button>
+  </section>
+
+  <section id="day-summary" class="hidden">
+    <h2>Dagens resultat</h2>
+    <div id="summary-emoji"></div>
+    <div id="summary-r"></div>
     <div id="result-buttons">
       <button id="btn-share">Dela resultat</button>
     </div>
     <div id="share-feedback"></div>
-    <p id="comeback">Nytt pussel imorgon! 🌅</p>
+
+    <div id="leaderboard">
+      <h3>🏆 Leaderboard</h3>
+      <div id="lb-submit-row">
+        <input id="lb-name" type="text" maxlength="20" placeholder="Ditt namn">
+        <button id="btn-submit-score">Skicka in poäng</button>
+      </div>
+      <div id="lb-feedback"></div>
+      <div id="lb-tabs">
+        <button class="lb-tab selected" data-tab="today">Idag</button>
+        <button class="lb-tab" data-tab="total">Totalt</button>
+      </div>
+      <div id="lb-list"></div>
+    </div>
+
+    <p id="comeback">Fem nya charts imorgon! 🌅</p>
   </section>
 
   <footer>
     <p>Historisk data · inget av detta är finansiell rådgivning</p>
   </footer>
 
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

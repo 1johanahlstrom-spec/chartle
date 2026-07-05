@@ -1,8 +1,9 @@
-// Chartle — dagens chart-pussel
-// All state ligger i localStorage, inga konton, ingen backend.
+// Chartle — dagens chart-pussel, 5 rundor per dag.
+// Spelstate i localStorage. Leaderboard via Supabase (valfritt, se config.js).
 
 const EPOCH = Date.UTC(2026, 6, 5);      // 2026-07-05 = Chartle #1
-const TOTAL_PUZZLES = 365;
+const ROUNDS = 5;
+const TOTAL_PUZZLES = 1825;               // 5 pussel/dag × 365 dagar
 const ENTRY = 100;                        // priser är normaliserade: sista synliga close = 100
 
 const $ = (id) => document.getElementById(id);
@@ -13,27 +14,40 @@ const todayUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
 const dayIndex = Math.floor((todayUTC - EPOCH) / 86400000); // 0 = första dagen
 const puzzleNo = dayIndex + 1;
 
-// Övningsläge: ?p=N laddar godtyckligt pussel utan att röra streak
+// Övningsläge: ?p=N laddar ett enskilt pussel utan att röra streak/poäng
 const params = new URLSearchParams(location.search);
 const practice = params.has("p");
-const fileIndex = practice
-  ? parseInt(params.get("p"), 10) % TOTAL_PUZZLES
-  : ((dayIndex % TOTAL_PUZZLES) + TOTAL_PUZZLES) % TOTAL_PUZZLES;
 
-$("puzzle-no").textContent = practice ? `övning ${fileIndex}` : `#${puzzleNo}`;
+$("puzzle-no").textContent = practice ? `övning ${params.get("p")}` : `#${puzzleNo}`;
+
+function fileIndexFor(round) {
+  if (practice) return ((parseInt(params.get("p"), 10) % TOTAL_PUZZLES) + TOTAL_PUZZLES) % TOTAL_PUZZLES;
+  return (((dayIndex * ROUNDS + round) % TOTAL_PUZZLES) + TOTAL_PUZZLES) % TOTAL_PUZZLES;
+}
 
 // --- Lagring -----------------------------------------------------------------
 function loadState() {
   try { return JSON.parse(localStorage.getItem("chartle") || "{}"); }
   catch { return {}; }
 }
-function saveState(s) { localStorage.setItem("chartle", JSON.stringify(s)); }
+function saveState() { localStorage.setItem("chartle", JSON.stringify(state)); }
 
 const state = loadState();
-state.results = state.results || {};
-$("streak").textContent = `🔥 ${state.streak || 0}`;
+if (!state.v) {           // migrera från v1 (en runda/dag): behåll bara streaken
+  state.v = 2;
+  delete state.results;
+}
+state.days = state.days || {};
+state.totalR = state.totalR || 0;
+if (!state.playerId && crypto.randomUUID) state.playerId = crypto.randomUUID();
 
-// --- Ladda pussel & rita chart ------------------------------------------------
+function day() {
+  if (!state.days[puzzleNo]) state.days[puzzleNo] = { rounds: [] };
+  return state.days[puzzleNo];
+}
+function dayR(d) { return d.rounds.reduce((s, r) => s + r.r, 0); }
+
+// --- Chart --------------------------------------------------------------------
 let puzzle = null;
 let meta = null;
 let selectedStop = 5;
@@ -91,30 +105,30 @@ function stopShapes(choice, stopLevel) {
   return [line(ENTRY, "#8b95a3", "dot"), line(stopLevel, "#ef5350", "dash")];
 }
 
-// --- Poäng: R-multipel --------------------------------------------------------
-// Long: stop under entry. Om low ≤ stop under utfallet → stoppad (gap = sämre fill).
-// R = resultat / risk, där risk = avståndet entry→stop.
+// --- Poäng: R-multipel ----------------------------------------------------------
+// Long: stop under entry. Gap förbi stoppen fylls på open (sämre än -1R kan hända).
+// Ingen stop träffad → exit på sista utfallsdagens close. R = resultat / risk.
 function computeR(choice, stopPct) {
-  if (choice === "pass") return { r: 0, exit: ENTRY, stopped: false };
+  if (choice === "pass") return { r: 0, stopped: false };
   const risk = stopPct;
   const stopLevel = choice === "long" ? ENTRY - risk : ENTRY + risk;
 
   for (let i = puzzle.visible; i < puzzle.o.length; i++) {
     if (choice === "long" && puzzle.o[i] <= stopLevel)
-      return { r: (puzzle.o[i] - ENTRY) / risk, exit: puzzle.o[i], stopped: true };
+      return { r: (puzzle.o[i] - ENTRY) / risk, stopped: true };
     if (choice === "long" && puzzle.l[i] <= stopLevel)
-      return { r: -1, exit: stopLevel, stopped: true };
+      return { r: -1, stopped: true };
     if (choice === "short" && puzzle.o[i] >= stopLevel)
-      return { r: (ENTRY - puzzle.o[i]) / risk, exit: puzzle.o[i], stopped: true };
+      return { r: (ENTRY - puzzle.o[i]) / risk, stopped: true };
     if (choice === "short" && puzzle.h[i] >= stopLevel)
-      return { r: -1, exit: stopLevel, stopped: true };
+      return { r: -1, stopped: true };
   }
   const finalClose = puzzle.c[puzzle.c.length - 1];
   const r = choice === "long" ? (finalClose - ENTRY) / risk : (ENTRY - finalClose) / risk;
-  return { r, exit: finalClose, stopped: false };
+  return { r, stopped: false };
 }
 
-// --- Resultat & delning ---------------------------------------------------------
+// --- UI-hjälpare ------------------------------------------------------------------
 const CHOICE_LABEL = { long: "📈 Long", short: "📉 Short", pass: "🤚 Avstå" };
 const CATEGORY_LABEL = {
   momentum: "momentum-namn",
@@ -127,77 +141,75 @@ function fmtR(r) {
   const v = Math.round(r * 10) / 10;
   return (v > 0 ? "+" : "") + v.toFixed(1) + "R";
 }
-
-function resultEmoji(choice, r) {
-  if (choice === "pass") return "⬜";
-  return r > 0 ? "🟩" : r < 0 ? "🟥" : "⬜";
+function rColor(r) { return r > 0 ? "#26a69a" : r < 0 ? "#ef5350" : "#8b95a3"; }
+function resultEmoji(round) {
+  if (round.choice === "pass") return "⬜";
+  return round.r > 0 ? "🟩" : round.r < 0 ? "🟥" : "⬜";
 }
 
-function showResult(res) {
-  const { choice, stopPct, r } = res;
-  const scoreEl = $("result-score");
-  scoreEl.textContent = `${CHOICE_LABEL[choice]} → ${fmtR(r)}`;
-  scoreEl.style.color = r > 0 ? "#26a69a" : r < 0 ? "#ef5350" : "#8b95a3";
-
-  const dir = meta.fwdRetPct > 0 ? "steg" : "föll";
-  const stoppedNote = res.stopped ? " Du blev stoppad på vägen." : "";
-  $("result-facit").innerHTML =
-    `Det var <strong>${meta.ticker}</strong> (${CATEGORY_LABEL[meta.category] || meta.category}), ` +
-    `beslutdagen var <strong>${meta.decision}</strong> vid kursen $${meta.entryPrice}.<br>` +
-    `De följande 10 dagarna ${dir} aktien <strong>${Math.abs(meta.fwdRetPct)}%</strong>.` +
-    stoppedNote +
-    (choice !== "pass" ? `<br>Din stop låg på ${stopPct}%.` : "");
-
-  $("controls").style.display = "none";
-  $("result").classList.remove("hidden");
-  if (practice) $("comeback").textContent = "Övningsläge — påverkar inte din streak.";
+function updateHeader() {
+  $("streak").textContent = `🔥 ${state.streak || 0}`;
+  $("total-r").textContent = `Σ ${fmtR(state.totalR)}`;
+  const d = practice ? { rounds: [] } : day();
+  $("round-no").textContent = Math.min(d.rounds.length + 1, ROUNDS);
+  $("day-r").textContent = fmtR(dayR(d));
 }
-
-function shareText(res) {
-  const dirEmoji = { long: "📈", short: "📉", pass: "🤚" }[res.choice];
-  let txt = `Chartle #${puzzleNo} ${dirEmoji}${resultEmoji(res.choice, res.r)} ${fmtR(res.r)}`;
-  if (!practice && state.streak > 1) txt += ` 🔥${state.streak}`;
-  return txt;
-}
-
-$("btn-share").addEventListener("click", async () => {
-  const res = practice ? lastResult : state.results[puzzleNo];
-  const txt = shareText(res);
-  try {
-    if (navigator.share) await navigator.share({ text: txt });
-    else {
-      await navigator.clipboard.writeText(txt);
-      $("share-feedback").textContent = "Kopierat till urklipp!";
-    }
-  } catch { /* användaren avbröt */ }
-});
 
 // --- Spelflöde -------------------------------------------------------------------
-let lastResult = null;
+let practiceResult = null;
 
-function updateStreak(r) {
-  if (practice) return;
-  const prev = state.lastPlayedDay;
-  if (r >= 0) {
-    state.streak = (prev === dayIndex - 1 ? (state.streak || 0) : 0) + 1;
-  } else {
-    state.streak = 0;
-  }
-  state.lastPlayedDay = dayIndex;
-  $("streak").textContent = `🔥 ${state.streak}`;
+function showRoundResult(round) {
+  $("result-score").textContent = `${CHOICE_LABEL[round.choice]} → ${fmtR(round.r)}`;
+  $("result-score").style.color = rColor(round.r);
+
+  const dir = meta.fwdRetPct > 0 ? "steg" : "föll";
+  $("result-facit").innerHTML =
+    `Det var <strong>${meta.ticker}</strong> (${CATEGORY_LABEL[meta.category] || meta.category}), ` +
+    `beslutsdagen var <strong>${meta.decision}</strong> vid kursen $${meta.entryPrice}.<br>` +
+    `De följande 10 dagarna ${dir} aktien <strong>${Math.abs(meta.fwdRetPct)}%</strong>.` +
+    (round.stopped ? " Du blev stoppad på vägen." : "");
+
+  const done = practice || day().rounds.length >= ROUNDS;
+  $("btn-next").textContent = practice ? "Spela igen →"
+    : done ? "Dagens resultat →" : "Nästa chart →";
+  $("controls").classList.add("hidden");
+  $("round-result").classList.remove("hidden");
+}
+
+function showDaySummary() {
+  const d = day();
+  const total = dayR(d);
+  $("summary-emoji").textContent = d.rounds.map(resultEmoji).join(" ");
+  $("summary-r").textContent = fmtR(total);
+  $("summary-r").style.color = rColor(total);
+
+  $("controls").classList.add("hidden");
+  $("round-result").classList.add("hidden");
+  $("day-summary").classList.remove("hidden");
+  initLeaderboard();
 }
 
 function revealAndScore(choice) {
   document.querySelectorAll(".decision, .stop-btn").forEach(b => b.disabled = true);
 
   const res = computeR(choice, selectedStop);
-  const stored = { choice, stopPct: selectedStop, r: res.r, stopped: res.stopped };
-  lastResult = stored;
-  if (!practice) {
-    updateStreak(res.r);
-    state.results[puzzleNo] = stored;
-    saveState(state);
+  const round = { choice, stopPct: selectedStop, r: Math.round(res.r * 100) / 100, stopped: res.stopped };
+
+  if (practice) {
+    practiceResult = round;
+  } else {
+    const d = day();
+    d.rounds.push(round);
+    if (d.rounds.length === ROUNDS) {          // dagen klar → poäng & streak
+      const total = dayR(d);
+      state.totalR = Math.round((state.totalR + total) * 100) / 100;
+      const prev = state.lastPlayedDay;
+      state.streak = total >= 0 ? (prev === dayIndex - 1 ? (state.streak || 0) : 0) + 1 : 0;
+      state.lastPlayedDay = dayIndex;
+    }
+    saveState();
   }
+  updateHeader();
 
   // Animera fram de 10 utfallsdagarna, en candle i taget
   const stopLevel = choice === "long" ? ENTRY - selectedStop : ENTRY + selectedStop;
@@ -208,10 +220,30 @@ function revealAndScore(choice) {
     drawChart(n, shapes);
     if (n >= puzzle.o.length) {
       clearInterval(timer);
-      showResult(stored);
+      showRoundResult(round);
     }
-  }, 220);
+  }, 200);
 }
+
+async function loadRound(round) {
+  const resp = await fetch(`puzzles/${fileIndexFor(round)}.json`);
+  puzzle = await resp.json();
+  meta = JSON.parse(atob(puzzle.meta));
+
+  drawChart(puzzle.visible);
+  document.querySelectorAll(".decision, .stop-btn").forEach(b => b.disabled = false);
+  $("round-result").classList.add("hidden");
+  $("day-summary").classList.add("hidden");
+  $("controls").classList.remove("hidden");
+  updateHeader();
+}
+
+$("btn-next").addEventListener("click", () => {
+  if (practice) { location.reload(); return; }
+  const d = day();
+  if (d.rounds.length >= ROUNDS) showDaySummary();
+  else loadRound(d.rounds.length);
+});
 
 document.querySelectorAll(".stop-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -225,20 +257,132 @@ $("btn-long").addEventListener("click", () => revealAndScore("long"));
 $("btn-short").addEventListener("click", () => revealAndScore("short"));
 $("btn-pass").addEventListener("click", () => revealAndScore("pass"));
 
-async function init() {
-  const resp = await fetch(`puzzles/${fileIndex}.json`);
-  puzzle = await resp.json();
-  meta = JSON.parse(atob(puzzle.meta));
+// --- Delning ------------------------------------------------------------------------
+function shareText() {
+  const d = day();
+  let txt = `Chartle #${puzzleNo} ${d.rounds.map(resultEmoji).join("")} ${fmtR(dayR(d))}`;
+  if (state.streak > 1) txt += ` 🔥${state.streak}`;
+  return txt + "\nhttps://1johanahlstrom-spec.github.io/chartle/";
+}
 
-  const already = !practice && state.results[puzzleNo];
-  if (already) {
-    // Redan spelat idag: visa hela charten + resultatet direkt
-    lastResult = already;
-    const stopLevel = already.choice === "long" ? ENTRY - already.stopPct : ENTRY + already.stopPct;
-    drawChart(puzzle.o.length, stopShapes(already.choice, stopLevel));
-    showResult(already);
+$("btn-share").addEventListener("click", async () => {
+  const txt = shareText();
+  try {
+    if (navigator.share) await navigator.share({ text: txt });
+    else {
+      await navigator.clipboard.writeText(txt);
+      $("share-feedback").textContent = "Kopierat till urklipp!";
+    }
+  } catch { /* användaren avbröt */ }
+});
+
+// --- Leaderboard (Supabase) ------------------------------------------------------------
+const LB = window.CHARTLE_CONFIG || {};
+const lbEnabled = LB.SUPABASE_URL && LB.SUPABASE_ANON_KEY;
+let lbTab = "today";
+
+async function lbRequest(path, options = {}) {
+  const resp = await fetch(`${LB.SUPABASE_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: LB.SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${LB.SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+      ...(options.headers || {}),
+    },
+  });
+  return resp;
+}
+
+async function submitScore() {
+  const name = $("lb-name").value.trim();
+  if (!name) { $("lb-feedback").textContent = "Skriv ett namn först."; return; }
+  state.playerName = name;
+  saveState();
+
+  $("btn-submit-score").disabled = true;
+  const resp = await lbRequest("scores", {
+    method: "POST",
+    body: JSON.stringify({
+      day: puzzleNo,
+      player_id: state.playerId,
+      name,
+      day_r: Math.round(dayR(day()) * 100) / 100,
+    }),
+  });
+  if (resp.ok || resp.status === 409) {   // 409 = redan inskickad idag
+    day().submitted = true;
+    saveState();
+    $("lb-feedback").textContent = "Inskickat! 🏆";
+    $("lb-submit-row").classList.add("hidden");
+    renderLeaderboard();
   } else {
-    drawChart(puzzle.visible);
+    $("btn-submit-score").disabled = false;
+    $("lb-feedback").textContent = "Kunde inte skicka in — försök igen.";
+  }
+}
+
+async function renderLeaderboard() {
+  const list = $("lb-list");
+  list.innerHTML = "<p class='lb-loading'>Laddar…</p>";
+  const query = lbTab === "today"
+    ? `scores?day=eq.${puzzleNo}&select=player_id,name,day_r&order=day_r.desc&limit=25`
+    : `leaderboard_total?select=player_id,name,total_r,days&order=total_r.desc&limit=25`;
+  const resp = await lbRequest(query, { headers: { Prefer: "" } });
+  if (!resp.ok) { list.innerHTML = "<p class='lb-loading'>Kunde inte ladda listan.</p>"; return; }
+  const rows = await resp.json();
+  if (!rows.length) { list.innerHTML = "<p class='lb-loading'>Inga resultat ännu — bli först!</p>"; return; }
+
+  list.innerHTML = "";
+  const table = document.createElement("table");
+  rows.forEach((row, i) => {
+    const tr = document.createElement("tr");
+    if (row.player_id === state.playerId) tr.className = "me";
+    const score = lbTab === "today" ? row.day_r : row.total_r;
+    const extra = lbTab === "total" ? ` · ${row.days} dagar` : "";
+    const medal = ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
+    const td = (txt) => { const el = document.createElement("td"); el.textContent = txt; return el; };
+    tr.append(td(medal), td(row.name + extra), td(fmtR(Number(score))));
+    table.appendChild(tr);
+  });
+  list.appendChild(table);
+}
+
+function initLeaderboard() {
+  if (!lbEnabled) {
+    $("leaderboard").innerHTML = "<h3>🏆 Leaderboard</h3><p class='lb-loading'>Leaderboarden är inte igång ännu.</p>";
+    return;
+  }
+  if (state.playerName) $("lb-name").value = state.playerName;
+  if (day().submitted) $("lb-submit-row").classList.add("hidden");
+  renderLeaderboard();
+}
+
+$("btn-submit-score").addEventListener("click", submitScore);
+document.querySelectorAll(".lb-tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".lb-tab").forEach(b => b.classList.remove("selected"));
+    btn.classList.add("selected");
+    lbTab = btn.dataset.tab;
+    renderLeaderboard();
+  });
+});
+
+// --- Start ------------------------------------------------------------------------------
+function init() {
+  updateHeader();
+  if (practice) { loadRound(0); return; }
+  const d = day();
+  if (d.rounds.length >= ROUNDS) {
+    loadRound(ROUNDS - 1).then(() => {   // visa sista charten fullt utspelad bakom summeringen
+      const last = d.rounds[ROUNDS - 1];
+      const stopLevel = last.choice === "long" ? ENTRY - last.stopPct : ENTRY + last.stopPct;
+      drawChart(puzzle.o.length, stopShapes(last.choice, stopLevel));
+      showDaySummary();
+    });
+  } else {
+    loadRound(d.rounds.length);
   }
 }
 

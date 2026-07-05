@@ -18,10 +18,10 @@ import pandas as pd
 VISIBLE = 60          # candles spelaren ser
 OUTCOME = 10          # dagar som spelas fram
 WINDOW = VISIBLE + OUTCOME
-STRIDE = 15           # testa nytt kandidatfönster var 15:e dag
-MIN_GAP = 40          # min avstånd mellan valda fönster i samma ticker
-MAX_PER_TICKER = 12
-TARGETS = {"long": 150, "short": 90, "neutral": 125}  # summa 365
+STRIDE = 10           # testa nytt kandidatfönster var 10:e dag
+MIN_GAP = 25          # min avstånd mellan valda fönster i samma ticker
+MAX_PER_TICKER = 45
+TARGETS = {"long": 750, "short": 450, "neutral": 625}  # 1825 = 5 pussel/dag i 365 dagar
 
 data = pd.read_pickle("rawdata.pkl")
 categories = pd.read_pickle("categories.pkl")
