@@ -1,24 +1,25 @@
 # Chartle — utvecklarnoteringar
 
-Dagligt chart-pussel (Wordle för trading). Statisk webbapp utan backend för
-själva spelet; valfri Supabase-leaderboard. Full beskrivning i README.md.
+Dagligt chart-pussel (Wordle för trading). Statisk webbapp med ett litet
+egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
 
 ## Arkitektur i korthet
 
 - `pipeline/` — Python-skript som körs EN gång lokalt för att generera pussel.
   Kräver `rawdata.pkl` (skapas av `fetch_data.py`, gitignorerad). Determinism:
   seed 42, samma rådata → samma 1825 pussel.
-- `docs/` — hela sajten (vanilla JS + Plotly via CDN, ingen byggkedja).
-  Mappen heter `docs/` för att GitHub Pages kräver rot eller `/docs`.
+- `docs/` — webbklienten (vanilla JS + Plotly via CDN, ingen byggkedja).
+- `server/` — leaderboard-API med Pythons standardbibliotek och SQLite.
+- `compose.yaml` + `Caddyfile` — egenhostad drift på localhost:8137; Tailscale
+  Funnel publicerar porten med HTTPS på Funnel-port 10000.
 - Epoch: 2026-07-05 = Chartle #1. Runda r på dag d laddar
   `puzzles/{(d*5 + r) % 1825}.json`. Ändra ALDRIG epoch eller pusselordningen
   efter lansering — då får spelare om-numrerade/upprepade pussel.
 
 ## Regler och fällor
 
-- **Deploy**: GitHub Pages med `build_type=workflow`
-  (`.github/workflows/pages.yml`). Byt inte till branch-deploy — Jekyll-kedjan
-  hänger sig på ~1800 filer. `docs/.nojekyll` ska också ligga kvar.
+- **Deploy**: egen Ubuntu-server via `compose.yaml`. Caddy serverar `docs/` och
+  proxar `/api/*` på `127.0.0.1:8137`; Tailscale Funnel sköter publik HTTPS.
 - **Priser i pussel-JSON är normaliserade**: sista synliga close = 100.
   All poänglogik (R-multiplar, stops) i `app.js` bygger på det.
 - **MA10/MA20 räknas klientsidan** i `app.js` (`sma()`), inte i pusseldatan.
@@ -53,6 +54,6 @@ cd docs && python3 -m http.server 8137   # kör lokalt
 # övningsläge: http://localhost:8137/?p=42 (rör inte streak/poäng)
 ```
 
-Leaderboard: aktiveras genom att fylla i `docs/config.js` (Supabase-URL +
-anon-nyckel) och köra `leaderboard.sql` i Supabase SQL Editor. Tom config =
-leaderboard-UI:t visar "inte igång ännu".
+Leaderboard: API:t använder `/data/chartle.db` i den persistenta Docker-volymen
+`chartle_data`. `docs/config.js` styr om leaderboarden är aktiv och använder
+same-origin `/api` i normal serverdrift.

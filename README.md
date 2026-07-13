@@ -15,11 +15,14 @@ Monday 1987 till dot-com och 2020-talet.
 pipeline/           Python-skript som byggs körs EN gång lokalt
   fetch_data.py     Steg 1: hämtar dagsdata 1962–2024 för 85 tickers (yfinance)
   build_puzzles.py  Steg 2–4: väljer 1825 fönster, normaliserar, skriver JSON
-docs/                Hela spelet — statiska filer, ingen backend
+docs/                Hela spelets webbklient
   index.html
   style.css
   app.js
   puzzles/          1825 st JSON-filer (~2,4 kB styck, ~4,3 MB totalt)
+server/              Litet leaderboard-API (Python + SQLite)
+compose.yaml         Webb, API, databasvolym och lokal Caddy
+Caddyfile            Serverkonfiguration
 ```
 
 ## Köra lokalt
@@ -61,34 +64,66 @@ Fördelning: 750 long / 450 short / 625 avstå (neutral) = 5 pussel/dag i 365 da
   rundornas R. Dag med totalt R ≥ 0 förlänger streaken, förlust eller missad
   dag nollar den. Σ i headern är ackumulerad R över alla spelade dagar.
 
-## Leaderboard (Supabase)
+## Leaderboard
 
-Leaderboarden är avstängd tills `docs/config.js` fylls i. Så här sätter du
-igång den (gratis, ~5 minuter):
-
-1. Skapa konto på [supabase.com](https://supabase.com) och skapa ett projekt
-   (valfritt namn, gratis-planen räcker).
-2. Öppna **SQL Editor** → New query, klistra in innehållet i `leaderboard.sql`
-   och kör det. Det skapar tabellen `scores` (insert-only via RLS) och vyn
-   `leaderboard_total`.
-3. Gå till **Settings → API** och kopiera *Project URL* och *anon public*-nyckeln
-   till `docs/config.js`. Anon-nyckeln är publik per design — skyddet ligger i
-   RLS-policyerna.
-4. Committa och pusha. Klart.
+Leaderboarden körs på den egna servern via API:t i `server/app.py`. Resultaten
+lagras i SQLite i Docker-volymen `chartle_data`; inga externa databastjänster
+eller API-nycklar behövs.
 
 Spelare identifieras med ett anonymt UUID i localStorage + valfritt namn.
 Poäng skickas in en gång per dag efter femte rundan.
 
-## Publicera
+## Köra hela Chartle med Docker och Tailscale Funnel
 
-Sajten deployas till GitHub Pages via GitHub Actions
-(`.github/workflows/pages.yml`): varje push till `main` laddar upp `docs/`
-som Pages-artefakt och deployar — klart på under en minut.
+Servern kör Chartle på en port som bara kan nås lokalt. Tailscale Funnel ger
+sedan en publik HTTPS-adress utan routerändringar eller eget domännamn.
 
-Obs: den klassiska Jekyll-baserade Pages-kedjan (deploy from branch) klarade
-inte repots ~1800 pusselfiler — bygget fastnade/felade. Därför är Pages
-konfigurerat med `build_type=workflow`. Ändra inte tillbaka till
-branch-deploy i repo-inställningarna.
+Starta Chartle:
+
+```bash
+docker compose up -d --build
+docker compose ps
+curl http://127.0.0.1:8137/api/health
+```
+
+Publicera den på Tailscales lediga Funnel-port 10000:
+
+```bash
+tailscale funnel --bg --https=10000 http://127.0.0.1:8137
+tailscale funnel status
+```
+
+Den publika adressen blir
+`https://serverjohan.tail8248b9.ts.net:10000/`. Tailscale avslutar HTTPS och
+skickar trafiken till den lokala Caddy-containern. Befintliga Tailscale Serve-
+regler och Pi-hole på port 80/443 påverkas inte.
+
+Stoppa den publika tunneln med:
+
+```bash
+tailscale funnel --https=10000 off
+```
+
+### Uppdatera
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+### Backup av databasen
+
+SQLite använder WAL-läge. Gör en konsistent backup med SQLite inifrån
+API-containern:
+
+```bash
+docker compose exec api python -c 'import sqlite3; s=sqlite3.connect("/data/chartle.db"); d=sqlite3.connect("/data/backup.db"); s.backup(d); d.close(); s.close()'
+docker compose cp api:/data/backup.db ./chartle-backup.db
+```
+
+GitHub Pages-flödet är borttaget eftersom den kompletta appen nu publiceras från
+den egna servern. `docs/` kan fortfarande köras fristående för lokal utveckling,
+men leaderboarden kräver Docker-miljön eller ett separat startat API.
 
 ## Senare
 

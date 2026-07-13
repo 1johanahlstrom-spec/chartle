@@ -1,5 +1,5 @@
 // Chartle — dagens chart-pussel, 5 rundor per dag.
-// Spelstate i localStorage. Leaderboard via Supabase (valfritt, se config.js).
+// Spelstate i localStorage. Leaderboard via eget API (se config.js).
 
 const EPOCH = Date.UTC(2026, 6, 5);      // 2026-07-05 = Chartle #1
 const ROUNDS = 5;
@@ -307,19 +307,17 @@ $("btn-share").addEventListener("click", async () => {
   } catch { /* användaren avbröt */ }
 });
 
-// --- Leaderboard (Supabase) ------------------------------------------------------------
+// --- Leaderboard (eget API + SQLite) ---------------------------------------------------
 const LB = window.CHARTLE_CONFIG || {};
-const lbEnabled = LB.SUPABASE_URL && LB.SUPABASE_ANON_KEY;
+const lbEnabled = LB.LEADERBOARD_ENABLED === true;
+const apiBase = (LB.API_BASE || "").replace(/\/$/, "");
 let lbTab = "today";
 
 async function lbRequest(path, options = {}) {
-  const resp = await fetch(`${LB.SUPABASE_URL}/rest/v1/${path}`, {
+  const resp = await fetch(`${apiBase}/api/${path}`, {
     ...options,
     headers: {
-      apikey: LB.SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${LB.SUPABASE_ANON_KEY}`,
       "Content-Type": "application/json",
-      Prefer: "return=minimal",
       ...(options.headers || {}),
     },
   });
@@ -358,9 +356,9 @@ async function renderLeaderboard() {
   const list = $("lb-list");
   list.innerHTML = "<p class='lb-loading'>Laddar…</p>";
   const query = lbTab === "today"
-    ? `scores?day=eq.${puzzleNo}&select=player_id,name,day_r&order=day_r.desc&limit=25`
-    : `leaderboard_total?select=player_id,name,total_r,days&order=total_r.desc&limit=25`;
-  const resp = await lbRequest(query, { headers: { Prefer: "" } });
+    ? `leaderboard/today?day=${puzzleNo}&limit=25`
+    : "leaderboard/total?limit=25";
+  const resp = await lbRequest(query);
   if (!resp.ok) { list.innerHTML = "<p class='lb-loading'>Kunde inte ladda listan.</p>"; return; }
   const rows = await resp.json();
   if (!rows.length) { list.innerHTML = "<p class='lb-loading'>Inga resultat ännu — bli först!</p>"; return; }
