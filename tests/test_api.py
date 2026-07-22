@@ -4,7 +4,14 @@ import unittest
 import uuid
 from pathlib import Path
 
-from server.app import init_db, insert_score, today_leaderboard, total_leaderboard
+from server.app import (
+    RateLimiter,
+    current_puzzle_no,
+    init_db,
+    insert_score,
+    today_leaderboard,
+    total_leaderboard,
+)
 
 
 class LeaderboardTest(unittest.TestCase):
@@ -52,6 +59,44 @@ class LeaderboardTest(unittest.TestCase):
             self.score(1, self.alice, "", 1)
         with self.assertRaises(ValueError):
             self.score(1, self.alice, "Alice", 101)
+
+    def test_future_days_are_rejected(self):
+        """Ingen ska kunna fylla listan för dagar som inte inträffat än."""
+        future = current_puzzle_no() + 5
+        with self.assertRaises(ValueError):
+            self.score(future, self.alice, "Alice", 1)
+        # Dagens och morgondagens nummer ska däremot gå igenom (tidszonsglapp).
+        self.score(current_puzzle_no(), self.alice, "Alice", 1)
+        self.score(current_puzzle_no() + 1, self.bob, "Bob", 1)
+
+    def test_absurd_scores_are_rejected(self):
+        for bad in (100, -100, 41, 10 ** 400, float("inf"), float("nan")):
+            with self.subTest(day_r=bad), self.assertRaises(ValueError):
+                self.score(1, self.alice, "Alice", bad)
+
+    def test_realistic_scores_are_accepted(self):
+        self.score(1, self.alice, "Alice", 12.5)
+        self.score(2, self.alice, "Alice", -8.25)
+        rows = total_leaderboard(25, self.db_path)
+        self.assertAlmostEqual(rows[0]["total_r"], 4.3)   # SQL rundar till 1 decimal
+
+
+class RateLimiterTest(unittest.TestCase):
+    def test_blocks_after_limit_per_ip(self):
+        limiter = RateLimiter(limit=3, window=3600)
+        self.assertEqual([limiter.check("1.2.3.4") for _ in range(4)],
+                         [True, True, True, False])
+
+    def test_other_ips_are_unaffected(self):
+        limiter = RateLimiter(limit=1, window=3600)
+        self.assertTrue(limiter.check("1.2.3.4"))
+        self.assertFalse(limiter.check("1.2.3.4"))
+        self.assertTrue(limiter.check("5.6.7.8"))
+
+    def test_window_expiry_frees_the_quota(self):
+        limiter = RateLimiter(limit=1, window=0.0)   # allt är omedelbart gammalt
+        self.assertTrue(limiter.check("1.2.3.4"))
+        self.assertTrue(limiter.check("1.2.3.4"))
 
 
 if __name__ == "__main__":
