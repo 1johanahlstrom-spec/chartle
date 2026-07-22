@@ -1,10 +1,12 @@
 # Kodgranskning inför driftsättning — Chartle
 
-> **Status 2026-07-22: åtgärdad.** Alla måste- och bör-punkter är fixade, plus
-> fem av sex kan-vänta-punkter och ett fynd som dök upp först när testerna
-> skrevs (se "Nytt fynd" nedan). Texten under beskriver problemen **som de såg
-> ut vid granskningen** — den är alltså en historik, inte en beskrivning av
-> koden idag. Kvarstående punkter listas sist i det här avsnittet.
+> **Status 2026-07-22: avslutad.** Alla 23 punkter är hanterade — åtgärdade,
+> medvetet accepterade eller medvetet lämnade — plus ett fynd som dök upp
+> först när testerna skrevs (se "Nytt fynd" nedan). Hela spelet är verifierat
+> i en riktig webbläsare med `tests/test_e2e.js`.
+>
+> Texten under beskriver problemen **som de såg ut vid granskningen** — den är
+> alltså en historik, inte en beskrivning av koden idag.
 
 ## Åtgärdsstatus
 
@@ -14,10 +16,10 @@
 | 2 | Ingen felhantering vid pusselladdning | ✅ try/catch + `showLoadError`, NaN-guard i `puzzleFileIndex` |
 | 3 | `build_puzzles.py` raderar allt först | ✅ staging-katalog + `CHARTLE_ALLOW_REBUILD`-spärr |
 | 4 | `fetch_data.py` korrumperar rådata | ✅ 90 %-tröskel, atomär skrivning, try/except |
-| 5 | Leaderboarden helt förfalskningsbar | ⚠️ Delvis — se "Kvarstående" |
+| 5 | Leaderboarden helt förfalskningsbar | ✅ Billiga attacker stoppade; resten accepterad risk |
 | 6 | Delningslänk till nedlagd sajt | ✅ `SHARE_URL` i config, fallback = sidans egen adress |
 | 7 | Pusslen börjar om 2027-07-05 | ✅ Notis i UI + dokumenterat, testat |
-| 8 | Facit och morgondagens pussel läckbara | ❌ Kräver server-API — se "Kvarstående" |
+| 8 | Facit och morgondagens pussel läckbara | ✅ Accepterad risk — se nedan |
 | 9 | `entryPrice` orimligt för gamla pussel | ✅ Priset utelämnas under $1, annars märkt "justerat" |
 | 10 | Plotly från CDN, ingen CSP | ✅ Självhostad i `docs/vendor/`, CSP i `Caddyfile` |
 | 11 | Ingen cache-busting | ✅ `?v=3` + Cache-Control per filtyp |
@@ -60,24 +62,48 @@ en ombyggnad hade numrerat om alla 1825 pussel.
 2,0037 plus MCD:s kända splithistorik — inte från en extern källa. Verifiera
 gärna McDonald's split-datum 1968 och 1969 innan du litar helt på siffrorna.
 
-## Kvarstående
+## Accepterad risk (medvetet beslut 2026-07-22)
 
 - **Fynd 5 och 8 är samma underliggande sak:** klienten äger både facit och
   poängen. Spärrarna som lagts in (poängtak ±40R, dagen måste ha inträffat,
-  10 inskick/timme/IP) stoppar de billiga attackerna, men den som vill fuska
-  kan fortfarande göra det, och `?p=` visar fortfarande morgondagens chart.
-  Riktig lösning: servern levererar de 60 synliga candlesen, tar emot
-  gissningen och skickar utfallet först därefter. Det är ett eget projekt.
+  10 inskick/timme/IP, ett resultat per spelare och dag) stoppar de billiga
+  attackerna — verifierat mot körande server:
+
+  ```
+  curl -d '{"day_r":100}'   → 400        11 inskick från samma IP → 429
+  curl -d '{"day":9999}'    → 400        samma spelare två ggr    → 409
+  ```
+
+  Kvar: `?p=90` visar morgondagens chart, och `atob(puzzle.meta)` ger facit.
+  **Detta är accepterat.** Leaderboarden är till för en vänkrets, inte en
+  tävling med insats, och priset för riktig fusksäkerhet är att spelet slutar
+  fungera utan API — egenskapen "ingen server behövs för själva spelet" är
+  medvetet värd mer än fusksäkerheten.
+
+  Om det någon gång ändras: servern levererar de 60 synliga candlesen, tar
+  emot gissningen och skickar utfallet först därefter, med poängräkning på
+  servern. Det är ett eget projekt, inte en patch.
+
+## Blockerat av ombyggnadsförbudet
+
 - **Fynd 18:** `meta.answer` kan inte tas bort utan att bygga om pusslen, vilket
   numrerar om dem. Fältet är kosmetiskt — poängen räknas alltid från prisserien
-  — och bevakas nu av ett test som kräver att riktningen stämmer.
-- ~~**Ingen browser-verifiering.**~~ ✅ Klart. `tests/test_e2e.js` kör hela
-  spelet i en riktig Chromium mot Caddy-stacken och verifierar: inga
-  CSP-överträdelser, Plotly ritar 60 candles + MA10/MA20, utspelningen ritar
-  alla 70, omladdning mitt i dagen ger ingen ny gissning (runda 2, 1 sparad
-  runda), 404 ger felmeddelande i stället för vit ruta, `?p=abc` ritar ett
-  giltigt pussel, och mobil 390 px scrollar inte i sidled. Testet hittade en
-  saknad favicon (404 vid varje sidladdning) — åtgärdad med `docs/favicon.svg`.
+  — och bevakas nu av ett test som kräver att riktningen stämmer. Ta bort det
+  om du någon gång bygger ut till fler än 365 dagar och ändå numrerar om.
+
+## Browser-verifiering
+
+`tests/test_e2e.js` kör hela spelet i Chromium mot Caddy-stacken:
+
+- inga CSP-överträdelser; Plotly ritar 60 candles, MA10/MA20 och volym
+- utspelningen ritar alla 70 candles och visar facit
+- omladdning mitt i dagen ger ingen ny gissning (runda 2, 1 sparad runda)
+- 404 på ett pussel ger felmeddelande, inte vit ruta, och döljer knapparna
+- `?p=abc` ritar ett giltigt pussel i stället för att krascha
+- mobil 390 px: chart 340 px hög, ingen sidledsscroll
+
+Testet hittade en saknad favicon som gav 404 vid varje sidladdning — åtgärdad
+med `docs/favicon.svg`.
 
 ---
 
