@@ -40,6 +40,14 @@ Spellogiken körs under fyra tidszoner — det är själva poängen med testerna
 dygnsgränsen. `tests/test_puzzles.py` kontrollerar dessutom alla 1825 byggda
 JSON-filer, bland annat att ingen ojusterad split ligger kvar i datan.
 
+Browsertestet ingår inte i `run.sh` (det drar ner en egen Chromium):
+
+```bash
+docker compose up -d
+npm install puppeteer
+node tests/test_e2e.js
+```
+
 ## Köra lokalt
 
 ```bash

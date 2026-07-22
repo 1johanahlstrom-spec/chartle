@@ -71,11 +71,13 @@ gärna McDonald's split-datum 1968 och 1969 innan du litar helt på siffrorna.
 - **Fynd 18:** `meta.answer` kan inte tas bort utan att bygga om pusslen, vilket
   numrerar om dem. Fältet är kosmetiskt — poängen räknas alltid från prisserien
   — och bevakas nu av ett test som kräver att riktningen stämmer.
-- **Ingen browser-verifiering.** CSP:n och den självhostade Plotly-filen är
-  verifierade statiskt (Plotly injicerar `<style>` → `unsafe-inline` behövs;
-  dess enda `new Function` är webpacks globals-shim bakom `globalThis` och
-  try/catch → `unsafe-eval` behövs inte). Men **ingen har öppnat sidan i en
-  riktig webbläsare** — det bör du göra före lansering.
+- ~~**Ingen browser-verifiering.**~~ ✅ Klart. `tests/test_e2e.js` kör hela
+  spelet i en riktig Chromium mot Caddy-stacken och verifierar: inga
+  CSP-överträdelser, Plotly ritar 60 candles + MA10/MA20, utspelningen ritar
+  alla 70, omladdning mitt i dagen ger ingen ny gissning (runda 2, 1 sparad
+  runda), 404 ger felmeddelande i stället för vit ruta, `?p=abc` ritar ett
+  giltigt pussel, och mobil 390 px scrollar inte i sidled. Testet hittade en
+  saknad favicon (404 vid varje sidladdning) — åtgärdad med `docs/favicon.svg`.
 
 ---
 
