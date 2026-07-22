@@ -15,6 +15,14 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
 - Epoch: 2026-07-05 = Chartle #1. Runda r på dag d laddar
   `puzzles/{(d*5 + r) % 1825}.json`. Ändra ALDRIG epoch eller pusselordningen
   efter lansering — då får spelare om-numrerade/upprepade pussel.
+  `build_puzzles.py` vägrar därför skriva över ett befintligt set utan
+  `CHARTLE_ALLOW_REBUILD=1`, och skriver via staging-katalog.
+- **Dygnsgränsen är Europe/Stockholm**, inte klientens lokala tid. Både
+  `docs/game.js` (`stockholmDayIndex`) och `server/app.py`
+  (`current_puzzle_no`) räknar så — ändras den ena måste den andra följa med.
+- `docs/game.js` innehåller all ren spellogik och testas av
+  `tests/test_game.js`. Lägg ny logik där, inte i `app.js` (som är DOM-bunden
+  och otestbar utan browser).
 
 ## Regler och fällor
 
@@ -32,7 +40,13 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
   och skriv migrering i `loadState`-blocket om schemat ändras.
 - **Avnoterade tickers**: yfinance tappar historik när bolag avnoteras
   (WBA → ersatt med KHC, SQ → XYZ). Kör om `fetch_data.py` med ersättare om
-  fler försvinner.
+  fler försvinner. Skriptet avbryter om <90 % av tickerna ger data, så en
+  halvtrasig nedladdning skriver inte över `rawdata.pkl`.
+- **Yahoos splithistorik saknar 60-talet.** Två MCD-fönster (pussel 1480 och
+  1482) hade en ojusterad 2:1-split i utfallsdelen — charten "kraschade" 50 %
+  under utspelningen och 1480 hade dessutom inverterat facit. Lagade med
+  `pipeline/repair_splits.py`; `tests/test_puzzles.py` vaktar mot återfall
+  genom att leta prisfall som träffar en exakt splitkvot.
 - **Dataspann 1962–2024**: yfinance har daglig OHLC från **1962-01-02** för
   klassiska blue chips — allt äldre (30/40/50-tal) finns bara i betalkällor.
   85 tickers, varav de långlivade (kategorierna `classic` + `techclassic`)

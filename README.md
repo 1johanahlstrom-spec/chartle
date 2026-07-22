@@ -12,18 +12,33 @@ Monday 1987 till dot-com och 2020-talet.
 ## Struktur
 
 ```
-pipeline/           Python-skript som byggs körs EN gång lokalt
+pipeline/           Python-skript som körs EN gång lokalt
   fetch_data.py     Steg 1: hämtar dagsdata 1962–2024 för 85 tickers (yfinance)
   build_puzzles.py  Steg 2–4: väljer 1825 fönster, normaliserar, skriver JSON
+  repair_splits.py  Lagar pussel där yfinance missat en split
 docs/                Hela spelets webbklient
   index.html
   style.css
-  app.js
+  game.js           Ren spellogik (dygnsgräns, pusselval, SMA, R) — testad
+  app.js            DOM, chart, spelflöde, leaderboard
+  config.js
+  vendor/           Plotly, självhostad (inget CDN)
   puzzles/          1825 st JSON-filer (~2,4 kB styck, ~4,3 MB totalt)
 server/              Litet leaderboard-API (Python + SQLite)
+tests/               node --test för spellogiken, unittest för API och pusseldata
 compose.yaml         Webb, API, databasvolym och lokal Caddy
 Caddyfile            Serverkonfiguration
 ```
+
+## Tester
+
+```bash
+./tests/run.sh
+```
+
+Spellogiken körs under fyra tidszoner — det är själva poängen med testerna av
+dygnsgränsen. `tests/test_puzzles.py` kontrollerar dessutom alla 1825 byggda
+JSON-filer, bland annat att ingen ojusterad split ligger kvar i datan.
 
 ## Köra lokalt
 
@@ -53,6 +68,12 @@ Fördelning: 750 long / 450 short / 625 avstå (neutral) = 5 pussel/dag i 365 da
 - **Dagens pussel**: `dayIndex = dagar sedan 2026-07-05` (epoch = Chartle #1),
   runda r laddar `puzzles/{(dayIndex*5 + r) % 1825}.json`. Samma för alla,
   ingen server behövs för själva spelet.
+- **Dygnet bryts vid midnatt i Europe/Stockholm**, inte i enhetens lokala tid.
+  Annars skulle spelare i olika tidszoner få olika pussel samma dag och
+  leaderboardens "idag" blanda ihop kalenderdygn. Servern räknar dagen på
+  samma sätt och avvisar inskick för dagar som inte inträffat än.
+- **Innehållet räcker 365 dagar.** Från 2027-07-05 börjar pusslen om från
+  början i samma ordning, och spelet visar en notis om det. Bygg ut i god tid.
 - **Anonymisering**: priser indexeras så sista synliga close = 100, volym så
   högsta synliga volym = 100. Inga datum på axlarna. Facit (ticker, datum,
   kategori) ligger base64-kodat i JSON:en — lätt obfuskering, som Wordle.
@@ -72,6 +93,12 @@ eller API-nycklar behövs.
 
 Spelare identifieras med ett anonymt UUID i localStorage + valfritt namn.
 Poäng skickas in en gång per dag efter femte rundan.
+
+**Leaderboarden är inte fusksäker.** Servern ser aldrig ett pussel — den tar
+emot ett tal. Det finns spärrar mot de billiga attackerna (poängtak ±40R,
+dagen måste ha inträffat, 10 inskick per timme och IP, ett resultat per spelare
+och dag), men den som vill fuska kan fortfarande göra det. Riktig fusksäkerhet
+kräver att servern håller facit och räknar poängen — se "Senare".
 
 ## Köra hela Chartle med Docker och Tailscale Funnel
 
@@ -120,6 +147,21 @@ API-containern:
 docker compose exec api python -c 'import sqlite3; s=sqlite3.connect("/data/chartle.db"); d=sqlite3.connect("/data/backup.db"); s.backup(d); d.close(); s.close()'
 docker compose cp api:/data/backup.db ./chartle-backup.db
 ```
+
+Volymen `chartle_data` är den enda kopian av allas resultat — automatisera det
+med en cron-rad på servern:
+
+```cron
+15 4 * * * cd /sokvag/till/chartle && docker compose exec -T api python -c 'import sqlite3; s=sqlite3.connect("/data/chartle.db"); d=sqlite3.connect("/data/backup.db"); s.backup(d); d.close(); s.close()' && docker compose cp api:/data/backup.db /sokvag/till/backup/chartle-$(date +\%F).db
+```
+
+### Ingen cron för datan
+
+Pusslen är förbyggda och statiska: `fetch_data.py` och `build_puzzles.py` körs
+en gång lokalt, aldrig på servern. Det finns alltså ingen daglig hämtning att
+schemalägga — backupen ovan är det enda återkommande jobbet. Kör *inte*
+`build_puzzles.py` mot ett publicerat pusselset; det numrerar om alla pussel
+(skriptet vägrar utan `CHARTLE_ALLOW_REBUILD=1`).
 
 GitHub Pages-flödet är borttaget eftersom den kompletta appen nu publiceras från
 den egna servern. `docs/` kan fortfarande köras fristående för lokal utveckling,
