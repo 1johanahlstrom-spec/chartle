@@ -1,17 +1,19 @@
 // Chartle — dagens chart-pussel, 5 rundor per dag.
 // Spelstate i localStorage. Leaderboard via eget API (se config.js).
 
-const EPOCH = Date.UTC(2026, 6, 5);      // 2026-07-05 = Chartle #1
-const ROUNDS = 5;
-const TOTAL_PUZZLES = 1825;               // 5 pussel/dag × 365 dagar
-const ENTRY = 100;                        // priser är normaliserade: sista synliga close = 100
+// Ren spellogik (dygnsgräns, pusselval, SMA, R-beräkning) bor i game.js och
+// testas av tests/test_game.js.
+const {
+  ROUNDS, DAYS_OF_CONTENT, ENTRY,
+  stockholmDayIndex, puzzleFileIndex, sma, computeR,
+} = ChartleGame;
+
+const KEEP_DAYS = 30;                     // så många spelade dagar sparas i localStorage
 
 const $ = (id) => document.getElementById(id);
 
 // --- Dagens pussel-nummer ---------------------------------------------------
-const now = new Date();
-const todayUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-const dayIndex = Math.floor((todayUTC - EPOCH) / 86400000); // 0 = första dagen
+const dayIndex = stockholmDayIndex();      // 0 = första dagen
 const puzzleNo = dayIndex + 1;
 
 // Övningsläge: ?p=N laddar ett enskilt pussel utan att röra streak/poäng
@@ -21,8 +23,7 @@ const practice = params.has("p");
 $("puzzle-no").textContent = practice ? `övning ${params.get("p")}` : `#${puzzleNo}`;
 
 function fileIndexFor(round) {
-  if (practice) return ((parseInt(params.get("p"), 10) % TOTAL_PUZZLES) + TOTAL_PUZZLES) % TOTAL_PUZZLES;
-  return (((dayIndex * ROUNDS + round) % TOTAL_PUZZLES) + TOTAL_PUZZLES) % TOTAL_PUZZLES;
+  return puzzleFileIndex(practice ? parseInt(params.get("p"), 10) : dayIndex * ROUNDS + round);
 }
 
 // --- Lagring -----------------------------------------------------------------
@@ -30,16 +31,38 @@ function loadState() {
   try { return JSON.parse(localStorage.getItem("chartle") || "{}"); }
   catch { return {}; }
 }
-function saveState() { localStorage.setItem("chartle", JSON.stringify(state)); }
+function saveState() {
+  try { localStorage.setItem("chartle", JSON.stringify(state)); }
+  catch (err) { console.error("Kunde inte spara state:", err); }  // t.ex. full kvot
+}
+
+// crypto.randomUUID saknas i osäkra kontexter och äldre webbläsare. Utan
+// fallback blir player_id undefined och alla inskick svarar 400.
+function newPlayerId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;            // version 4
+  b[8] = (b[8] & 0x3f) | 0x80;            // variant
+  const hex = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-` +
+         `${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// Behåll bara de senaste dagarna — totalsumman ligger ändå i state.totalR.
+function pruneDays(days) {
+  const keys = Object.keys(days).map(Number).sort((a, b) => b - a);
+  for (const key of keys.slice(KEEP_DAYS)) delete days[key];
+  return days;
+}
 
 const state = loadState();
 if (!state.v) {           // migrera från v1 (en runda/dag): behåll bara streaken
   state.v = 2;
   delete state.results;
 }
-state.days = state.days || {};
+state.days = pruneDays(state.days || {});
 state.totalR = state.totalR || 0;
-if (!state.playerId && crypto.randomUUID) state.playerId = crypto.randomUUID();
+if (!state.playerId) state.playerId = newPlayerId();
 
 function day() {
   if (!state.days[puzzleNo]) state.days[puzzleNo] = { rounds: [] };
@@ -74,20 +97,6 @@ const CHART_LAYOUT = {
   yaxis2: { domain: [0, 0.18], gridcolor: "#242d38", fixedrange: true, showticklabels: false },
   shapes: [],
 };
-
-// Glidande medelvärde (SMA) på close. Beräknas på de redan visade candlesen —
-// aldrig på framtida data — så inget läcker under utspelningen. De första
-// (period-1) punkterna blir null → Plotly ritar ingen linje där.
-function sma(closes, period) {
-  const out = [];
-  let sum = 0;
-  for (let i = 0; i < closes.length; i++) {
-    sum += closes[i];
-    if (i >= period) sum -= closes[i - period];
-    out.push(i >= period - 1 ? sum / period : null);
-  }
-  return out;
-}
 
 function traces(n) {
   const idx = [...Array(n).keys()];
@@ -134,29 +143,6 @@ function stopShapes(choice, stopLevel) {
   return [line(ENTRY, "#8b95a3", "dot"), line(stopLevel, "#ef5350", "dash")];
 }
 
-// --- Poäng: R-multipel ----------------------------------------------------------
-// Long: stop under entry. Gap förbi stoppen fylls på open (sämre än -1R kan hända).
-// Ingen stop träffad → exit på sista utfallsdagens close. R = resultat / risk.
-function computeR(choice, stopPct) {
-  if (choice === "pass") return { r: 0, stopped: false };
-  const risk = stopPct;
-  const stopLevel = choice === "long" ? ENTRY - risk : ENTRY + risk;
-
-  for (let i = puzzle.visible; i < puzzle.o.length; i++) {
-    if (choice === "long" && puzzle.o[i] <= stopLevel)
-      return { r: (puzzle.o[i] - ENTRY) / risk, stopped: true };
-    if (choice === "long" && puzzle.l[i] <= stopLevel)
-      return { r: -1, stopped: true };
-    if (choice === "short" && puzzle.o[i] >= stopLevel)
-      return { r: (ENTRY - puzzle.o[i]) / risk, stopped: true };
-    if (choice === "short" && puzzle.h[i] >= stopLevel)
-      return { r: -1, stopped: true };
-  }
-  const finalClose = puzzle.c[puzzle.c.length - 1];
-  const r = choice === "long" ? (finalClose - ENTRY) / risk : (ENTRY - finalClose) / risk;
-  return { r, stopped: false };
-}
-
 // --- UI-hjälpare ------------------------------------------------------------------
 const CHOICE_LABEL = { long: "📈 Long", short: "📉 Short", pass: "🤚 Avstå" };
 const CATEGORY_LABEL = {
@@ -186,17 +172,40 @@ function updateHeader() {
   $("day-r").textContent = fmtR(dayR(d));
 }
 
-// --- Spelflöde -------------------------------------------------------------------
-let practiceResult = null;
+// Varna när kalendern lämnat det byggda innehållet. Efter 365 dagar går
+// (dayIndex * 5) % 1825 tillbaka till 0 och hela året spelas om i samma ordning.
+function showCalendarNotice() {
+  if (practice) return;
+  let msg = "";
+  if (dayIndex < 0) {
+    // Går bara att nå med en felställd klocka — epoken ligger i det förflutna.
+    msg = "Enhetens datum verkar vara felställt: Chartle startade 2026-07-05. " +
+          "Kontrollera klockan, annars kan resultat inte skickas in.";
+  } else if (dayIndex >= DAYS_OF_CONTENT) {
+    const lap = Math.floor(dayIndex / DAYS_OF_CONTENT) + 1;
+    msg = `Varv ${lap}: alla ${DAYS_OF_CONTENT} dagars charts är spelade, ` +
+          "så de börjar om från början. Nya charts är på gång!";
+  }
+  if (!msg) return;
+  $("notice").textContent = msg;
+  $("notice").classList.remove("hidden");
+}
 
+// --- Spelflöde -------------------------------------------------------------------
 function showRoundResult(round) {
   $("result-score").textContent = `${CHOICE_LABEL[round.choice]} → ${fmtR(round.r)}`;
   $("result-score").style.color = rColor(round.r);
 
   const dir = meta.fwdRetPct > 0 ? "steg" : "föll";
+  // entryPrice är split- och utdelningsjusterat. För gamla blue chips blir det
+  // ören (XOM 1962 ≈ $0.09) och säger ingenting om vad aktien faktiskt kostade
+  // — då utelämnar vi priset hellre än att skriva ut något missvisande.
+  const price = meta.entryPrice >= 1
+    ? ` vid kursen $${meta.entryPrice} (justerat för split och utdelning)`
+    : "";
   $("result-facit").innerHTML =
     `Det var <strong>${meta.ticker}</strong> (${CATEGORY_LABEL[meta.category] || meta.category}), ` +
-    `beslutsdagen var <strong>${meta.decision}</strong> vid kursen $${meta.entryPrice}.<br>` +
+    `beslutsdagen var <strong>${meta.decision}</strong>${price}.<br>` +
     `De följande 10 dagarna ${dir} aktien <strong>${Math.abs(meta.fwdRetPct)}%</strong>.` +
     (round.stopped ? " Du blev stoppad på vägen." : "");
 
@@ -223,12 +232,10 @@ function showDaySummary() {
 function revealAndScore(choice) {
   document.querySelectorAll(".decision, .stop-btn").forEach(b => b.disabled = true);
 
-  const res = computeR(choice, selectedStop);
+  const res = computeR(puzzle, choice, selectedStop);
   const round = { choice, stopPct: selectedStop, r: Math.round(res.r * 100) / 100, stopped: res.stopped };
 
-  if (practice) {
-    practiceResult = round;
-  } else {
+  if (!practice) {
     const d = day();
     d.rounds.push(round);
     if (d.rounds.length === ROUNDS) {          // dagen klar → poäng & streak
@@ -256,10 +263,30 @@ function revealAndScore(choice) {
   }, 200);
 }
 
+function showLoadError() {
+  $("chart").innerHTML =
+    "<p class='load-error'>Kunde inte ladda charten.<br>" +
+    "Kontrollera nätverket och ladda om sidan.</p>";
+  $("controls").classList.add("hidden");
+}
+
+// Returnerar true om rundan laddades. Ett trasigt eller saknat pussel får
+// aldrig bli ett obehandlat promise-fel — då står spelaren med en vit ruta.
 async function loadRound(round) {
-  const resp = await fetch(`puzzles/${fileIndexFor(round)}.json`);
-  puzzle = await resp.json();
-  meta = JSON.parse(atob(puzzle.meta));
+  try {
+    const resp = await fetch(`puzzles/${fileIndexFor(round)}.json`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const loaded = await resp.json();
+    const parsed = JSON.parse(atob(loaded.meta));
+    if (!Array.isArray(loaded.c) || loaded.c.length <= loaded.visible)
+      throw new Error("Pusslet saknar utfallsdagar");
+    puzzle = loaded;
+    meta = parsed;
+  } catch (err) {
+    console.error("Kunde inte ladda runda", round, err);
+    showLoadError();
+    return false;
+  }
 
   drawChart(puzzle.visible);
   document.querySelectorAll(".decision, .stop-btn").forEach(b => b.disabled = false);
@@ -267,6 +294,7 @@ async function loadRound(round) {
   $("day-summary").classList.add("hidden");
   $("controls").classList.remove("hidden");
   updateHeader();
+  return true;
 }
 
 $("btn-next").addEventListener("click", () => {
@@ -293,7 +321,9 @@ function shareText() {
   const d = day();
   let txt = `Chartle #${puzzleNo} ${d.rounds.map(resultEmoji).join("")} ${fmtR(dayR(d))}`;
   if (state.streak > 1) txt += ` 🔥${state.streak}`;
-  return txt + "\nhttps://1johanahlstrom-spec.github.io/chartle/";
+  // Adressen sätts i config.js. Fallback = sidan spelaren faktiskt spelar på.
+  const url = (window.CHARTLE_CONFIG || {}).SHARE_URL || (location.origin + location.pathname);
+  return txt + "\n" + url;
 }
 
 $("btn-share").addEventListener("click", async () => {
@@ -327,28 +357,39 @@ async function lbRequest(path, options = {}) {
 async function submitScore() {
   const name = $("lb-name").value.trim();
   if (!name) { $("lb-feedback").textContent = "Skriv ett namn först."; return; }
+  if (puzzleNo < 1) { $("lb-feedback").textContent = "Chartle har inte startat än."; return; }
   state.playerName = name;
   saveState();
 
   $("btn-submit-score").disabled = true;
-  const resp = await lbRequest("scores", {
-    method: "POST",
-    body: JSON.stringify({
-      day: puzzleNo,
-      player_id: state.playerId,
-      name,
-      day_r: Math.round(dayR(day()) * 100) / 100,
-    }),
-  });
-  if (resp.ok || resp.status === 409) {   // 409 = redan inskickad idag
-    day().submitted = true;
-    saveState();
-    $("lb-feedback").textContent = "Inskickat! 🏆";
-    $("lb-submit-row").classList.add("hidden");
-    renderLeaderboard();
-  } else {
-    $("btn-submit-score").disabled = false;
-    $("lb-feedback").textContent = "Kunde inte skicka in — försök igen.";
+  $("lb-feedback").textContent = "Skickar…";
+  try {
+    const resp = await lbRequest("scores", {
+      method: "POST",
+      body: JSON.stringify({
+        day: puzzleNo,
+        player_id: state.playerId,
+        name,
+        day_r: Math.round(dayR(day()) * 100) / 100,
+      }),
+    });
+    if (resp.ok || resp.status === 409) {   // 409 = redan inskickad idag
+      day().submitted = true;
+      saveState();
+      $("lb-feedback").textContent = "Inskickat! 🏆";
+      $("lb-submit-row").classList.add("hidden");
+      renderLeaderboard();
+      return;
+    }
+    $("lb-feedback").textContent = resp.status === 429
+      ? "För många inskick — vänta en stund."
+      : "Kunde inte skicka in — försök igen.";
+  } catch (err) {
+    console.error("Inskick misslyckades:", err);
+    $("lb-feedback").textContent = "Ingen kontakt med servern — försök igen.";
+  } finally {
+    // Knappen måste tillbaka även vid nätverksfel, annars sitter spelaren fast.
+    if (!day().submitted) $("btn-submit-score").disabled = false;
   }
 }
 
@@ -358,9 +399,16 @@ async function renderLeaderboard() {
   const query = lbTab === "today"
     ? `leaderboard/today?day=${puzzleNo}&limit=25`
     : "leaderboard/total?limit=25";
-  const resp = await lbRequest(query);
-  if (!resp.ok) { list.innerHTML = "<p class='lb-loading'>Kunde inte ladda listan.</p>"; return; }
-  const rows = await resp.json();
+  let rows;
+  try {
+    const resp = await lbRequest(query);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    rows = await resp.json();
+  } catch (err) {
+    console.error("Kunde inte ladda leaderboard:", err);
+    list.innerHTML = "<p class='lb-loading'>Kunde inte ladda listan.</p>";
+    return;
+  }
   if (!rows.length) { list.innerHTML = "<p class='lb-loading'>Inga resultat ännu — bli först!</p>"; return; }
 
   list.innerHTML = "";
@@ -401,10 +449,12 @@ document.querySelectorAll(".lb-tab").forEach(btn => {
 // --- Start ------------------------------------------------------------------------------
 function init() {
   updateHeader();
+  showCalendarNotice();
   if (practice) { loadRound(0); return; }
   const d = day();
   if (d.rounds.length >= ROUNDS) {
-    loadRound(ROUNDS - 1).then(() => {   // visa sista charten fullt utspelad bakom summeringen
+    loadRound(ROUNDS - 1).then((ok) => {   // visa sista charten fullt utspelad bakom summeringen
+      if (!ok) return;
       const last = d.rounds[ROUNDS - 1];
       const stopLevel = last.choice === "long" ? ENTRY - last.stopPct : ENTRY + last.stopPct;
       drawChart(puzzle.o.length, stopShapes(last.choice, stopLevel));

@@ -4,8 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chartle — dagens chart-pussel</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  <link rel="stylesheet" href="style.css?v=3">
+  <!-- Plotly serveras lokalt: inget CDN-beroende, fungerar offline på LAN
+       och tillåter en strikt CSP utan 'unsafe-inline'/externa värdar. -->
+  <script src="vendor/plotly-2.35.2.min.js" charset="utf-8"></script>
 </head>
 <body>
   <header>
@@ -17,6 +19,8 @@
   </header>
 
   <p id="tagline">Runda <span id="round-no">1</span> av 5 · Dagens poäng: <span id="day-r">0R</span></p>
+
+  <p id="notice" class="hidden"></p>
 
   <div id="chart"></div>
 
@@ -70,7 +74,9 @@
     <p>Historisk data · inget av detta är finansiell rådgivning</p>
   </footer>
 
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <!-- ?v= bumpas vid varje deploy så att ingen kör vidare på cachad kod -->
+  <script src="config.js?v=3"></script>
+  <script src="game.js?v=3"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>
