@@ -2,7 +2,11 @@
 	encode zstd gzip
 
 	handle /api/* {
-		reverse_proxy api:8080
+		reverse_proxy api:8080 {
+			# Utan detta ser API:t bara Caddys container-IP, och rate
+			# limitingen skulle råka gälla alla spelare gemensamt.
+			header_up X-Real-IP {remote_host}
+		}
 	}
 
 	handle {
@@ -10,9 +14,27 @@
 		file_server
 	}
 
+	# Pusselfilerna ändras aldrig efter lansering (se pipeline/build_puzzles.py)
+	# och kan därför cachas hårt — det gör spelet märkbart snabbare.
+	@puzzles path /puzzles/*
+	header @puzzles Cache-Control "public, max-age=31536000, immutable"
+
+	# Plotly är versionsstämplat i filnamnet.
+	@vendor path /vendor/*
+	header @vendor Cache-Control "public, max-age=31536000, immutable"
+
+	# Egen kod revalideras alltid, så en deploy slår igenom direkt även om
+	# någon missar att bumpa ?v= i index.html.
+	@code path *.js *.css /
+	header @code Cache-Control "no-cache"
+
 	header {
 		Referrer-Policy "strict-origin-when-cross-origin"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
+		# 'unsafe-inline' i style-src krävs av Plotly, som injicerar en
+		# <style>-tagg vid uppstart. Script- och connect-src är låsta till
+		# egen origin — inga externa beroenden finns kvar.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
 	}
 }

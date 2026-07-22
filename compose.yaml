@@ -2,14 +2,28 @@ services:
   api:
     build: ./server
     restart: unless-stopped
+    # API:t skriver bara i /data (SQLite-volymen) — resten av filsystemet
+    # kan vara skrivskyddat.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - chartle_data:/data
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 10s
 
   web:
     image: caddy:2.10-alpine
@@ -17,6 +31,14 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "127.0.0.1:${CHARTLE_PORT:-8137}:80"
     volumes:
