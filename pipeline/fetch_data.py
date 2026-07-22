@@ -10,9 +10,13 @@ bolagen bidrar med 60/70/80/90-talschart, vilket är hela poängen.
 """
 
 import sys
+from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+
+HERE = Path(__file__).resolve().parent      # skriptet ska gå att köra var ifrån som helst
+MIN_OK_FRACTION = 0.9                       # andel tickers som måste ge data
 
 # --- Moderna tickers (2015-2024-eran), samma som ursprungssetet ---------------
 momentum = ["NVDA", "SMCI", "MU", "AMD", "TSLA",
@@ -51,12 +55,16 @@ CATEGORIES = {
 tickers = momentum + parabolic + boring + decliners + classic + techclassic
 print(f"Antal tickers: {len(tickers)}")
 
-data = yf.download(tickers, start="1962-01-01", end="2024-12-31",
-                   group_by="ticker", auto_adjust=True, threads=True)
+# auto_adjust=True justerar OHLC för både split och utdelning. Det är
+# avgörande: utan det ser varje split ut som en krasch mitt i charten.
+try:
+    data = yf.download(tickers, start="1962-01-01", end="2024-12-31",
+                       group_by="ticker", auto_adjust=True, threads=True)
+except Exception as error:                  # nätverksfel, API-ändringar, rate limit
+    sys.exit(f"AVBRYTER: nedladdningen misslyckades ({error}). Befintlig data är orörd.")
 
 if data.empty:
-    print("FEL: ingen data hämtades alls.")
-    sys.exit(1)
+    sys.exit("AVBRYTER: ingen data hämtades alls. Befintlig data är orörd.")
 
 # Kontrollera vilka tickers som faktiskt fick data
 ok, failed = [], []
@@ -68,10 +76,29 @@ for t in tickers:
             continue
     failed.append(t)
 
-print(f"OK: {len(ok)} tickers")
+print(f"OK: {len(ok)}/{len(tickers)} tickers")
 if failed:
     print(f"MISSLYCKADES: {failed}")
 
-data.to_pickle("rawdata.pkl")
-pd.to_pickle(CATEGORIES, "categories.pkl")
-print("Klart! Sparat till rawdata.pkl")
+# Skriv ALDRIG över en fungerande rawdata.pkl med ett stympat dataset. Filen är
+# gitignorerad, så det finns ingen kopia att gå tillbaka till.
+min_ok = int(len(tickers) * MIN_OK_FRACTION)
+if len(ok) < min_ok:
+    sys.exit(
+        f"AVBRYTER: bara {len(ok)} av {len(tickers)} tickers gav data "
+        f"(kräver minst {min_ok}). rawdata.pkl lämnas orörd.\n"
+        "Är fler bolag avnoterade? Byt ut dem i listorna ovan och kör om."
+    )
+
+# Spara bara det som faktiskt har data — annars kraschar build_puzzles.py med
+# KeyError på en ticker som saknas i rådatan.
+data = data[ok]
+categories_ok = {cat: [t for t in ts if t in ok] for cat, ts in CATEGORIES.items()}
+
+# Atomär skrivning: en krasch mitt i lämnar den gamla filen intakt.
+for frame, name in ((data, "rawdata.pkl"), (categories_ok, "categories.pkl")):
+    tmp = HERE / f"{name}.tmp"
+    pd.to_pickle(frame, tmp)
+    tmp.replace(HERE / name)
+
+print(f"Klart! Sparat {len(ok)} tickers till {HERE / 'rawdata.pkl'}")
