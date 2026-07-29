@@ -35,9 +35,11 @@ GAME_TZ = ZoneInfo("Europe/Stockholm")
 # ger som mest 251.4R på en dag (Chartle #250). 60 av 365 dagar kan passera
 # 40R, och 8 av dem redan med default-stoppet 5 %.
 #
-# Höj det aldrig utan att räkna om mot pusseldatan, och sänk det aldrig utan
-# att först cappa R i computeR — annars fastnar spelaren i "Kunde inte skicka
-# in" utan att ha gjort något fel.
+# Sedan dess kapar computeR varje runda vid ±10R (MAX_R i docs/game.js), så en
+# capad klient kan aldrig skicka mer än 5 × 10 = 50R. Taket ligger ändå kvar på
+# 300: en spelare med cachad app.js från före capen kan fortfarande räkna fram
+# upp till 251R, och att avvisa den med 400 vore att straffa någon för vår
+# deploy. Sänk till 60 först när ingen kan tänkas köra okapad kod längre.
 MAX_DAY_R = 300.0
 
 # Rate limiting per IP. Hindrar att någon fyller databasen med nya UUID:n.
@@ -200,10 +202,39 @@ def today_leaderboard(day: int, limit: int, db_path: Path = DB_PATH) -> list[dic
     return [dict(row) for row in rows]
 
 
-def total_leaderboard(limit: int, db_path: Path = DB_PATH) -> list[dict]:
+# Båda listorna räknar på samma rullande fönster: en enskild lyckoträff ska
+# blekna med tiden, och nya spelare ska kunna komma ikapp. Utan fönstret blir
+# totallistan permanent låst av den som spelade den dag som råkade innehålla
+# en squeeze.
+LEADERBOARD_WINDOW_DAYS = 30
+
+# Snittlistan kräver några dagar för att inte toppas av någon som spelat en
+# enda bra dag — det är ju precis den snedfördelningen listan finns för.
+MIN_DAYS_FOR_AVERAGE = 3
+
+_LEADERBOARD_ORDER = {
+    "total": "total_r DESC, days DESC, scores.player_id ASC",
+    "average": "avg_r DESC, days DESC, scores.player_id ASC",
+}
+
+
+def window_leaderboard(
+    limit: int, db_path: Path = DB_PATH, order: str = "total"
+) -> list[dict]:
+    """Ställning över de senaste LEADERBOARD_WINDOW_DAYS dagarna.
+
+    order väljs ur en whitelist — värdet går rakt in i SQL:en och får aldrig
+    komma från en query-parameter utan att passera _LEADERBOARD_ORDER.
+    """
+    if order not in _LEADERBOARD_ORDER:
+        raise ValueError(f"Ogiltig sortering: {order}")
+    since = current_puzzle_no() - LEADERBOARD_WINDOW_DAYS
+    having = "HAVING days >= ?" if order == "average" else ""
+    params: tuple = (since, MIN_DAYS_FOR_AVERAGE, limit) if order == "average" else (since, limit)
+
     with database(db_path) as db:
         rows = db.execute(
-            """
+            f"""
             SELECT
                 scores.player_id,
                 (
@@ -214,15 +245,26 @@ def total_leaderboard(limit: int, db_path: Path = DB_PATH) -> list[dict]:
                     LIMIT 1
                 ) AS name,
                 ROUND(SUM(scores.day_r), 1) AS total_r,
+                ROUND(AVG(scores.day_r), 2) AS avg_r,
                 COUNT(*) AS days
             FROM scores
+            WHERE scores.day > ?
             GROUP BY scores.player_id
-            ORDER BY total_r DESC, days DESC, scores.player_id ASC
+            {having}
+            ORDER BY {_LEADERBOARD_ORDER[order]}
             LIMIT ?
             """,
-            (limit,),
+            params,
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def total_leaderboard(limit: int, db_path: Path = DB_PATH) -> list[dict]:
+    return window_leaderboard(limit, db_path, "total")
+
+
+def average_leaderboard(limit: int, db_path: Path = DB_PATH) -> list[dict]:
+    return window_leaderboard(limit, db_path, "average")
 
 
 class RateLimiter:
@@ -283,6 +325,9 @@ class ChartleHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/leaderboard/total":
                 self.send_json(200, total_leaderboard(row_limit(query)))
+                return
+            if parsed.path == "/api/leaderboard/average":
+                self.send_json(200, average_leaderboard(row_limit(query)))
                 return
         except ValueError as error:
             self.send_json(400, {"error": str(error)})

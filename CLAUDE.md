@@ -36,10 +36,14 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
   (period-1) punkterna är `null` så Plotly inte ritar en ofullständig linje.
 - **Facit är base64-kodat** i `meta`-fältet — medveten lätt obfuskering,
   ingen säkerhet.
-- **`MAX_DAY_R` i `server/app.py` är härlett ur pusseldatan** (max 251,4R på en
-  dag). R har inget tak eftersom nämnaren är stoppavståndet — 2 %-stopp på
-  pussel 1246 ger +224,5R. Sänks taket avvisas ärliga resultat med 400. Ändras
-  det byggs `scores` om vid start; SQLite kan inte ALTER:a en CHECK-constraint.
+- **Två separata tak på poängen.** `MAX_R` i `docs/game.js` kapar varje runda
+  vid ±10R — R har annars ingen gräns åt något håll, eftersom nämnaren är
+  stoppavståndet (2 %-stopp på pussel 1246 ger okappat +224,5R, ett gap ned
+  ger -31,2R). Capen måste vara symmetrisk. `MAX_DAY_R` i `server/app.py`
+  ligger kvar på 300 trots att en capad klient max kan skicka 50R: en spelare
+  med cachad app.js från före capen kan fortfarande räkna fram 251R, och att
+  avvisa den med 400 vore att straffa någon för vår deploy. Ändras `MAX_DAY_R`
+  byggs `scores` om vid start; SQLite kan inte ALTER:a en CHECK-constraint.
 - **localStorage-schema** versioneras med `state.v` (nu 3). Bumpa versionen
   och skriv migrering i `loadState`-blocket om schemat ändras.
   v3 lade till `state.stats` (aggregerad statistik) och `ticker`/`year` per

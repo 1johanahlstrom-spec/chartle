@@ -10,6 +10,21 @@
   const DAYS_OF_CONTENT = TOTAL_PUZZLES / ROUNDS;   // 365 dagar innan pusslen börjar om
   const ENTRY = 100;                                // normaliserat: sista synliga close = 100
 
+  // Tak per runda. R har annars ingen gräns åt något håll — nämnaren är
+  // stoppavståndet, så ett 2 %-stopp på GME-squeezen 2021-02-23 ger +224.5R
+  // och ett gap ned genom stoppen kan ge -31.2R. En enda sådan runda var värd
+  // 20 vanliga speldagar på totallistan.
+  //
+  // Symmetriskt med flit: att bara kapa uppsidan hade gjort spelet brutalt
+  // negativt. Räknat över alla pussel × riktning × stop ligger 3.1 % över
+  // +10R och 0.19 % under -10R — capen klipper alltså svansen, inte spelet.
+  // Realistiskt också: ingen sitter kvar hela vägen upp i en squeeze.
+  const MAX_R = 10;
+
+  function capR(r) {
+    return Math.max(-MAX_R, Math.min(MAX_R, r));
+  }
+
   // Dygnet bryts vid midnatt i Europe/Stockholm — ALDRIG i enhetens lokala tid.
   // Annars får spelare i olika tidszoner olika pussel samma dag, och
   // leaderboardens "idag" blandar ihop kalenderdygn.
@@ -54,17 +69,17 @@
 
     for (let i = puzzle.visible; i < puzzle.o.length; i++) {
       if (choice === "long" && puzzle.o[i] <= stopLevel)
-        return { r: (puzzle.o[i] - ENTRY) / risk, stopped: true };
+        return { r: capR((puzzle.o[i] - ENTRY) / risk), stopped: true };
       if (choice === "long" && puzzle.l[i] <= stopLevel)
         return { r: -1, stopped: true };
       if (choice === "short" && puzzle.o[i] >= stopLevel)
-        return { r: (ENTRY - puzzle.o[i]) / risk, stopped: true };
+        return { r: capR((ENTRY - puzzle.o[i]) / risk), stopped: true };
       if (choice === "short" && puzzle.h[i] >= stopLevel)
         return { r: -1, stopped: true };
     }
     const finalClose = puzzle.c[puzzle.c.length - 1];
     const r = choice === "long" ? (finalClose - ENTRY) / risk : (ENTRY - finalClose) / risk;
-    return { r, stopped: false };
+    return { r: capR(r), stopped: false };
   }
 
   // --- Statistik ---------------------------------------------------------
@@ -148,7 +163,7 @@
   }
 
   const api = {
-    EPOCH_DAYS, ROUNDS, TOTAL_PUZZLES, DAYS_OF_CONTENT, ENTRY,
+    EPOCH_DAYS, ROUNDS, TOTAL_PUZZLES, DAYS_OF_CONTENT, ENTRY, MAX_R,
     stockholmDayIndex, puzzleFileIndex, sma, computeR,
     emptyStats, recordDay, statsFromDays, statsSummary,
   };

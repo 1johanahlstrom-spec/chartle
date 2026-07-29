@@ -93,7 +93,10 @@ Fördelning: 750 long / 450 short / 625 avstå (neutral) = 5 pussel/dag i 365 da
 - **Poäng**: R = resultat / risk. Stop på 2/5/8 % under (long) eller över
   (short) entry. Gap förbi stoppen fylls på open (sämre än -1R kan alltså hända,
   precis som på riktigt). Ingen stop träffad → exit på dag 10:s close.
-  Avstå = 0R.
+  Avstå = 0R. **Varje runda kapas vid ±10R** (`MAX_R` i `docs/game.js`):
+  utan cap ger ett 2 %-stopp på GME-squeezen 2021-02-23 +224,5R, och ett gap
+  ned genom stoppen -31,2R. Capen är symmetrisk och klipper bara svansen —
+  3,1 % av alla kombinationer ligger över +10R, 0,19 % under -10R.
 - **Poäng & streak**: lagras i localStorage. Dagens poäng = summan av de fem
   rundornas R. Dag med totalt R ≥ 0 förlänger streaken, förlust eller missad
   dag nollar den. Σ i headern är ackumulerad R över alla spelade dagar.
@@ -112,6 +115,19 @@ eller API-nycklar behövs.
 
 Spelare identifieras med ett anonymt UUID i localStorage + valfritt namn.
 Poäng skickas in en gång per dag efter femte rundan.
+
+Tre flikar, alla med 25 rader:
+
+| Flik | Endpoint | Innehåll |
+|---|---|---|
+| Idag | `/api/leaderboard/today?day=N` | Dagens ställning |
+| 30 dagar | `/api/leaderboard/total` | Summa R över `LEADERBOARD_WINDOW_DAYS` |
+| Snitt | `/api/leaderboard/average` | Snitt-R per dag, kräver `MIN_DAYS_FOR_AVERAGE` |
+
+Fönstret finns för att en enskild lyckoträff ska blekna i stället för att låsa
+listan permanent, och snittfliken för att belöna jämnhet framför antal spelade
+dagar. Snittlistan kräver minst 3 dagar — annars toppas den av den som spelat
+exakt en bra dag, vilket är precis den snedfördelningen den finns för.
 
 **Leaderboarden är inte fusksäker.** Servern ser aldrig ett pussel — den tar
 emot ett tal. Det finns spärrar mot de billiga attackerna (poängtak ±300R,

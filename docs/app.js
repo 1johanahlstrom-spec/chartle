@@ -601,12 +601,23 @@ async function submitScore() {
   }
 }
 
+// "30 dagar" och "Snitt" räknar på samma rullande fönster, bara sorterat
+// olika — totalen belönar den som spelat mycket, snittet den som spelat jämnt.
+const LB_QUERY = {
+  today: () => `leaderboard/today?day=${puzzleNo}&limit=25`,
+  total: () => "leaderboard/total?limit=25",
+  average: () => "leaderboard/average?limit=25",
+};
+const LB_EMPTY = {
+  today: "Inga resultat ännu — bli först!",
+  total: "Inga resultat de senaste 30 dagarna.",
+  average: "Ingen har spelat tillräckligt många dagar ännu.",
+};
+
 async function renderLeaderboard() {
   const list = $("lb-list");
   list.innerHTML = "<p class='lb-loading'>Laddar…</p>";
-  const query = lbTab === "today"
-    ? `leaderboard/today?day=${puzzleNo}&limit=25`
-    : "leaderboard/total?limit=25";
+  const query = LB_QUERY[lbTab]();
   let rows;
   try {
     const resp = await lbRequest(query);
@@ -617,15 +628,22 @@ async function renderLeaderboard() {
     list.innerHTML = "<p class='lb-loading'>Kunde inte ladda listan.</p>";
     return;
   }
-  if (!rows.length) { list.innerHTML = "<p class='lb-loading'>Inga resultat ännu — bli först!</p>"; return; }
+  if (!rows.length) {
+    list.innerHTML = "";
+    const empty = document.createElement("p");
+    empty.className = "lb-loading";
+    empty.textContent = LB_EMPTY[lbTab];
+    list.appendChild(empty);
+    return;
+  }
 
   list.innerHTML = "";
   const table = document.createElement("table");
   rows.forEach((row, i) => {
     const tr = document.createElement("tr");
     if (row.player_id === state.playerId) tr.className = "me";
-    const score = lbTab === "today" ? row.day_r : row.total_r;
-    const extra = lbTab === "total" ? ` · ${row.days} dagar` : "";
+    const score = lbTab === "today" ? row.day_r : lbTab === "average" ? row.avg_r : row.total_r;
+    const extra = lbTab === "today" ? "" : ` · ${row.days} ${row.days === 1 ? "dag" : "dagar"}`;
     const medal = ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
     const td = (txt) => { const el = document.createElement("td"); el.textContent = txt; return el; };
     tr.append(td(medal), td(row.name + extra), td(fmtR(Number(score))));

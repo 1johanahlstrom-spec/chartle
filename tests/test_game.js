@@ -102,6 +102,31 @@ test("ingen stop träffad → exit på sista utfallsdagens close", () => {
   assert.strictEqual(res.stopped, false);
 });
 
+test("R kapas vid +10R — en squeeze får inte äga totallistan", () => {
+  // 2 %-stop, close på 549 = +449 %: okappat (549-100)/2 = +224.5R.
+  const p = makePuzzle([{ o: 500, h: 560, l: 480, c: 549 }]);
+  const res = game.computeR(p, "long", 2);
+  assert.strictEqual(res.r, game.MAX_R);
+  assert.strictEqual(res.stopped, false);
+});
+
+test("capen är symmetrisk — gap ned kapas vid -10R", () => {
+  // Utan cap: (40-100)/2 = -30R. Att bara kapa uppsidan hade gjort spelet
+  // brutalt negativt, eftersom gap förbi stoppen är vanligare än squeezes.
+  const p = makePuzzle([{ o: 40, h: 45, l: 38, c: 42 }]);
+  const res = game.computeR(p, "long", 2);
+  assert.strictEqual(res.r, -game.MAX_R);
+  assert.strictEqual(res.stopped, true);
+});
+
+test("capen rör inte vanliga utfall", () => {
+  // Normalspelet ska vara oförändrat: bara 3.1 % av alla kombinationer i
+  // pusseldatan ligger över +10R.
+  const p = makePuzzle([{ o: 101, h: 112, l: 100, c: 110 }]);
+  assert.strictEqual(game.computeR(p, "long", 5).r, 2);
+  assert.strictEqual(game.computeR(p, "short", 5).r, -1);
+});
+
 test("avstå ger alltid 0R", () => {
   const p = makePuzzle([{ o: 50, h: 50, l: 50, c: 50 }]);
   assert.deepStrictEqual(game.computeR(p, "pass", 5), { r: 0, stopped: false });

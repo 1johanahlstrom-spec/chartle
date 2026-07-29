@@ -228,19 +228,37 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // Full utspelning är 10 × 200 ms. Skip ska korta det rejält men ändå rita ut allt.
   if (skipped > 1500) problems.push(`Skip tog ${skipped} ms — utspelningen avbröts inte`);
   if (afterSkip.candles !== 70) problems.push(`Efter skip ritades ${afterSkip.candles}/70 candles`);
-  // 2 %-stop på ett +449 %-utfall ger +224.5R. Om den siffran ändras har
-  // antingen pusseldatan eller computeR ändrats — och serverns tak måste följa med.
-  if (!afterSkip.score.includes("+224.5R"))
-    problems.push(`Väntade +224.5R på pussel 1246, fick "${afterSkip.score}"`);
+  // 2 %-stop på ett +449 %-utfall ger okappat +224.5R. MAX_R kapar vid +10R —
+  // det är hela poängen med capen, så den siffran bevakas här.
+  if (!afterSkip.score.includes("+10.0R"))
+    problems.push(`Väntade +10.0R (capad) på pussel 1246, fick "${afterSkip.score}"`);
   // Övningsläget får aldrig skriva speldata.
   const practiceState = JSON.parse(afterSkip.stored || "{}");
   if (Object.keys(practiceState.days || {}).length)
     problems.push("Övningsläget sparade en spelad dag");
 
-  // ---- 5. Leaderboard laddar ----
+  // ---- 5. Leaderboard: alla tre flikarna laddar ----
+  // Steg 4d öppnade en ny flik, så den här sidan ligger i bakgrunden. page.click
+  // väntar på en rAF-baserad stabilitetskoll, och requestAnimationFrame stryps
+  // i dolda flikar — utan bringToFront hänger klicket tills protocolTimeout.
+  await page.bringToFront();
   await sleep(1200);
   const lb = await page.evaluate(() => document.querySelector("#lb-list").textContent.trim());
-  log("\n5. Leaderboard:", lb.slice(0, 90));
+  log("\n5. Leaderboard (Idag):", lb.slice(0, 90));
+
+  for (const tab of ["total", "average"]) {
+    await page.click(`.lb-tab[data-tab="${tab}"]`);
+    await sleep(900);
+    const view = await page.evaluate(() => ({
+      text: document.querySelector("#lb-list").textContent.trim(),
+      label: document.querySelector(".lb-tab.selected").textContent,
+    }));
+    log(`   ${view.label}:`, view.text.slice(0, 90));
+    // "Kunde inte ladda listan" betyder att endpointen saknas eller svarar fel.
+    if (view.text.includes("Kunde inte ladda"))
+      problems.push(`Fliken ${tab} kunde inte hämta sin lista`);
+  }
+  await page.click('.lb-tab[data-tab="today"]');
 
   // ---- 6. Trasigt pussel ger felmeddelande, inte vit ruta ----
   const broken = await browser.newPage();

@@ -5,13 +5,17 @@ import uuid
 from pathlib import Path
 
 from server.app import (
+    LEADERBOARD_WINDOW_DAYS,
     MAX_DAY_R,
+    MIN_DAYS_FOR_AVERAGE,
     RateLimiter,
+    average_leaderboard,
     current_puzzle_no,
     init_db,
     insert_score,
     today_leaderboard,
     total_leaderboard,
+    window_leaderboard,
 )
 
 
@@ -32,6 +36,16 @@ class LeaderboardTest(unittest.TestCase):
             self.db_path,
         )
 
+    @staticmethod
+    def recent(offset=0):
+        """Ett dagnummer som ligger inom det rullande fönstret.
+
+        Hårdkodad dag 1 fungerar bara så länge spelet är yngre än
+        LEADERBOARD_WINDOW_DAYS — sedan faller den tyst ur listan och testet
+        blir grönt av fel anledning.
+        """
+        return current_puzzle_no() - offset
+
     def test_today_is_sorted(self):
         self.score(1, self.alice, "Alice", 1.25)
         self.score(1, self.bob, "Bob", 2.5)
@@ -39,8 +53,8 @@ class LeaderboardTest(unittest.TestCase):
         self.assertEqual([row["name"] for row in rows], ["Bob", "Alice"])
 
     def test_total_uses_latest_name(self):
-        self.score(1, self.alice, "Alice", 1.25)
-        self.score(2, self.alice, "Alicia", 2.25)
+        self.score(self.recent(1), self.alice, "Alice", 1.25)
+        self.score(self.recent(0), self.alice, "Alicia", 2.25)
         rows = total_leaderboard(25, self.db_path)
         self.assertEqual(rows[0]["name"], "Alicia")
         self.assertEqual(rows[0]["total_r"], 3.5)
@@ -76,10 +90,48 @@ class LeaderboardTest(unittest.TestCase):
                 self.score(1, self.alice, "Alice", bad)
 
     def test_realistic_scores_are_accepted(self):
-        self.score(1, self.alice, "Alice", 12.5)
-        self.score(2, self.alice, "Alice", -8.25)
+        self.score(self.recent(1), self.alice, "Alice", 12.5)
+        self.score(self.recent(0), self.alice, "Alice", -8.25)
         rows = total_leaderboard(25, self.db_path)
         self.assertAlmostEqual(rows[0]["total_r"], 4.3)   # SQL rundar till 1 decimal
+
+    def test_total_only_counts_the_rolling_window(self):
+        """En lyckoträff ska blekna, inte låsa listan för alltid."""
+        old = current_puzzle_no() - LEADERBOARD_WINDOW_DAYS - 1
+        if old >= 1:                       # bara meningsfullt när spelet hunnit dit
+            self.score(old, self.alice, "Alice", 250)
+        self.score(self.recent(0), self.bob, "Bob", 3)
+        rows = total_leaderboard(25, self.db_path)
+        self.assertEqual([row["name"] for row in rows], ["Bob"])
+
+    def test_average_ranks_consistency_over_volume(self):
+        """Snittlistan ska belöna jämnhet, inte antal spelade dagar."""
+        for offset in range(4):            # Alice: fyra dagar à 2R = snitt 2.0
+            self.score(self.recent(offset), self.alice, "Alice", 2)
+        for offset in range(4):            # Bob: en toppdag och tre svaga
+            self.score(self.recent(offset), self.bob, "Bob", 9 if offset == 0 else -1)
+
+        by_total = [row["name"] for row in total_leaderboard(25, self.db_path)]
+        by_average = [row["name"] for row in average_leaderboard(25, self.db_path)]
+        self.assertEqual(by_total, ["Alice", "Bob"])       # 8.0 mot 6.0
+        self.assertEqual(by_average, ["Alice", "Bob"])     # 2.0 mot 1.5
+        self.assertEqual(average_leaderboard(25, self.db_path)[0]["avg_r"], 2.0)
+
+    def test_average_needs_a_minimum_number_of_days(self):
+        """Annars toppas snittlistan av den som spelat exakt en bra dag."""
+        self.score(self.recent(0), self.alice, "Endagsunder", 10)
+        self.assertEqual(average_leaderboard(25, self.db_path), [])
+
+        for offset in range(MIN_DAYS_FOR_AVERAGE):
+            self.score(self.recent(offset), self.bob, "Bob", 1)
+        self.assertEqual(
+            [row["name"] for row in average_leaderboard(25, self.db_path)], ["Bob"]
+        )
+
+    def test_leaderboard_order_is_whitelisted(self):
+        """order går rakt in i SQL:en och får aldrig komma från en query-parameter."""
+        with self.assertRaises(ValueError):
+            window_leaderboard(25, self.db_path, "day_r DESC; DROP TABLE scores")
 
     def test_extreme_but_playable_scores_are_accepted(self):
         """Taket får inte avvisa resultat som faktiskt går att spela fram.
