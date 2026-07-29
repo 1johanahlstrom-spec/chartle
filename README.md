@@ -167,19 +167,24 @@ docker compose up -d --build
 
 ### Backup av databasen
 
-SQLite använder WAL-läge. Gör en konsistent backup med SQLite inifrån
-API-containern:
+Volymen `chartle_data` är den enda kopian av allas resultat. Pusslen är
+statiska och ligger i git — databasen gör det inte.
 
 ```bash
-docker compose exec api python -c 'import sqlite3; s=sqlite3.connect("/data/chartle.db"); d=sqlite3.connect("/data/backup.db"); s.backup(d); d.close(); s.close()'
-docker compose cp api:/data/backup.db ./chartle-backup.db
+./scripts/backup-chartle.sh
 ```
 
-Volymen `chartle_data` är den enda kopian av allas resultat — automatisera det
-med en cron-rad på servern:
+Skriptet använder `VACUUM INTO`, inte `docker cp` av `chartle.db`: SQLite kör
+i WAL-läge, så färska inskick ligger i `chartle.db-wal` och en kopia av bara
+huvudfilen kan sakna de senaste dagarnas resultat. Det verifierar att kopian
+går att läsa, roterar bort allt äldre än 14 backuper till `~/chartle-backup/`,
+och rör kvittofilen `.senast-lyckad` sist — dess tidsstämpel är därför ett
+ärligt svar på "när lyckades backupen senast?".
+
+Installerad i crontab:
 
 ```cron
-15 4 * * * cd /sokvag/till/chartle && docker compose exec -T api python -c 'import sqlite3; s=sqlite3.connect("/data/chartle.db"); d=sqlite3.connect("/data/backup.db"); s.backup(d); d.close(); s.close()' && docker compose cp api:/data/backup.db /sokvag/till/backup/chartle-$(date +\%F).db
+0 2 * * * /home/betong/chartle/scripts/backup-chartle.sh >> /home/betong/backup-chartle.log 2>&1
 ```
 
 ### Ingen cron för datan
