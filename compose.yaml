@@ -40,7 +40,7 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "127.0.0.1:${CHARTLE_PORT:-8137}:80"
+      - "100.77.124.124:${CHARTLE_PORT:-8137}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./docs:/srv:ro

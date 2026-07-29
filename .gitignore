@@ -5,4 +5,5 @@ pipeline/categories.pkl
 pipeline/*.pkl.tmp
 docs/puzzles.new/
 node_modules/
+package.json
 package-lock.json

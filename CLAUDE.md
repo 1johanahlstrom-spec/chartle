@@ -36,8 +36,16 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
   (period-1) punkterna är `null` så Plotly inte ritar en ofullständig linje.
 - **Facit är base64-kodat** i `meta`-fältet — medveten lätt obfuskering,
   ingen säkerhet.
-- **localStorage-schema** versioneras med `state.v` (nu 2). Bumpa versionen
+- **`MAX_DAY_R` i `server/app.py` är härlett ur pusseldatan** (max 251,4R på en
+  dag). R har inget tak eftersom nämnaren är stoppavståndet — 2 %-stopp på
+  pussel 1246 ger +224,5R. Sänks taket avvisas ärliga resultat med 400. Ändras
+  det byggs `scores` om vid start; SQLite kan inte ALTER:a en CHECK-constraint.
+- **localStorage-schema** versioneras med `state.v` (nu 3). Bumpa versionen
   och skriv migrering i `loadState`-blocket om schemat ändras.
+  v3 lade till `state.stats` (aggregerad statistik) och `ticker`/`year` per
+  runda. `state.stats` **måste** aggregeras vid varje avslutad dag — det går
+  inte att räkna om ur `state.days`, som `pruneDays` kapar till 30 dagar.
+  Migreringen från v2 körs därför före `pruneDays`.
 - **Avnoterade tickers**: yfinance tappar historik när bolag avnoteras
   (WBA → ersatt med KHC, SQ → XYZ). Kör om `fetch_data.py` med ersättare om
   fler försvinner. Skriptet avbryter om <90 % av tickerna ger data, så en

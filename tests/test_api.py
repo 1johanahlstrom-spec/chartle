@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from server.app import (
+    MAX_DAY_R,
     RateLimiter,
     current_puzzle_no,
     init_db,
@@ -58,7 +59,7 @@ class LeaderboardTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.score(1, self.alice, "", 1)
         with self.assertRaises(ValueError):
-            self.score(1, self.alice, "Alice", 101)
+            self.score(1, self.alice, "Alice", MAX_DAY_R + 1)
 
     def test_future_days_are_rejected(self):
         """Ingen ska kunna fylla listan för dagar som inte inträffat än."""
@@ -70,7 +71,7 @@ class LeaderboardTest(unittest.TestCase):
         self.score(current_puzzle_no() + 1, self.bob, "Bob", 1)
 
     def test_absurd_scores_are_rejected(self):
-        for bad in (100, -100, 41, 10 ** 400, float("inf"), float("nan")):
+        for bad in (301, -301, 10 ** 400, float("inf"), float("nan")):
             with self.subTest(day_r=bad), self.assertRaises(ValueError):
                 self.score(1, self.alice, "Alice", bad)
 
@@ -79,6 +80,81 @@ class LeaderboardTest(unittest.TestCase):
         self.score(2, self.alice, "Alice", -8.25)
         rows = total_leaderboard(25, self.db_path)
         self.assertAlmostEqual(rows[0]["total_r"], 4.3)   # SQL rundar till 1 decimal
+
+    def test_extreme_but_playable_scores_are_accepted(self):
+        """Taket får inte avvisa resultat som faktiskt går att spela fram.
+
+        Chartle #250 ger 251.4R vid perfekt spel med 2 %-stopp (GME-squeezen
+        2021-02-23 ligger i det dygnet). Det gamla taket på 40R gjorde att
+        just den spelaren aldrig kom in på listan. Dagnumret här måste vara
+        ett som redan inträffat — annars är det dagkollen som avvisar, inte
+        taket, och testet skulle bli grönt av fel anledning.
+        """
+        today = current_puzzle_no()
+        self.score(today, self.alice, "Alice", 251.4)
+        rows = today_leaderboard(today, 25, self.db_path)
+        self.assertEqual(rows[0]["day_r"], 251.4)
+
+    def test_check_constraint_matches_the_python_limit(self):
+        """SQL-taket och MAX_DAY_R måste följas åt, annars nekar databasen tyst."""
+        with sqlite3.connect(self.db_path) as db:
+            schema = db.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'scores'"
+            ).fetchone()[0]
+        self.assertIn(f"BETWEEN {-MAX_DAY_R:g} AND {MAX_DAY_R:g}", schema)
+
+
+class SchemaMigrationTest(unittest.TestCase):
+    """En databas med det gamla ±100-taket ska byggas om utan att tappa rader."""
+
+    OLD_SCHEMA = """
+        CREATE TABLE scores (
+            id         INTEGER PRIMARY KEY,
+            day        INTEGER NOT NULL CHECK (day >= 1),
+            player_id  TEXT NOT NULL,
+            name       TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 20),
+            day_r      REAL NOT NULL CHECK (day_r BETWEEN -100 AND 100),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (day, player_id)
+        )
+    """
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tempdir.name) / "chartle.db"
+        with sqlite3.connect(self.db_path) as db:
+            db.execute(self.OLD_SCHEMA)
+            db.execute(
+                "INSERT INTO scores(day, player_id, name, day_r) VALUES (?, ?, ?, ?)",
+                (1, str(uuid.uuid4()), "Gammal", 12.5),
+            )
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_rows_survive_the_rebuild(self):
+        init_db(self.db_path)
+        rows = today_leaderboard(1, 25, self.db_path)
+        self.assertEqual([row["name"] for row in rows], ["Gammal"])
+        self.assertEqual(rows[0]["day_r"], 12.5)
+
+    def test_new_limit_applies_after_the_rebuild(self):
+        init_db(self.db_path)
+        insert_score(
+            {"day": 2, "player_id": str(uuid.uuid4()), "name": "Ny", "day_r": 251.4},
+            self.db_path,
+        )
+        self.assertEqual(today_leaderboard(2, 25, self.db_path)[0]["day_r"], 251.4)
+
+    def test_rebuild_is_idempotent(self):
+        init_db(self.db_path)
+        init_db(self.db_path)                     # andra starten ska inte röra något
+        self.assertEqual(len(today_leaderboard(1, 25, self.db_path)), 1)
+        with sqlite3.connect(self.db_path) as db:
+            leftovers = db.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'scores_rebuild'"
+            ).fetchall()
+        self.assertEqual(leftovers, [], "temporär tabell lämnades kvar")
 
 
 class RateLimiterTest(unittest.TestCase):

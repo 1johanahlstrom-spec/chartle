@@ -6,6 +6,7 @@
 const {
   ROUNDS, DAYS_OF_CONTENT, ENTRY,
   stockholmDayIndex, puzzleFileIndex, sma, computeR,
+  emptyStats, recordDay, statsFromDays, statsSummary,
 } = ChartleGame;
 
 const KEEP_DAYS = 30;                     // så många spelade dagar sparas i localStorage
@@ -60,9 +61,22 @@ if (!state.v) {           // migrera från v1 (en runda/dag): behåll bara strea
   state.v = 2;
   delete state.results;
 }
+if (state.v === 2) {      // v3: aggregerad statistik + ticker sparad per runda
+  // Måste köras FÖRE pruneDays — annars migreras bara de dagar som råkar
+  // överleva städningen, och de äldre försvinner ur statistiken för alltid.
+  state.stats = statsFromDays(state.days, ROUNDS);
+  state.stats.maxStreak = Math.max(state.stats.maxStreak, state.streak || 0);
+  state.v = 3;
+}
+state.stats = state.stats || emptyStats();
 state.days = pruneDays(state.days || {});
 state.totalR = state.totalR || 0;
 if (!state.playerId) state.playerId = newPlayerId();
+
+// Skriv tillbaka direkt. Utan detta lever migreringen, städningen och ett
+// nygenererat playerId bara i minnet tills spelaren råkar avsluta en runda —
+// och räknas om vid varje sidladdning fram till dess.
+saveState();
 
 function day() {
   if (!state.days[puzzleNo]) state.days[puzzleNo] = { rounds: [] };
@@ -74,6 +88,7 @@ function dayR(d) { return d.rounds.reduce((s, r) => s + r.r, 0); }
 let puzzle = null;
 let meta = null;
 let selectedStop = 5;
+let playback = null;      // pågående utspelning, null när ingen är igång
 
 const CHART_LAYOUT = {
   paper_bgcolor: "#1a2029",
@@ -216,12 +231,44 @@ function showRoundResult(round) {
   $("round-result").classList.remove("hidden");
 }
 
+// Rundhistorik: vad de fem emojierna faktiskt stod för. Rundor sparade under
+// schema v2 saknar ticker/år — då visas raden ändå, bara utan namnet.
+function renderRoundHistory(rounds) {
+  const list = $("round-history");
+  list.innerHTML = "";
+  const table = document.createElement("table");
+  rounds.forEach((round, i) => {
+    const tr = document.createElement("tr");
+    const td = (txt, cls) => {
+      const el = document.createElement("td");
+      el.textContent = txt;
+      if (cls) el.className = cls;
+      return el;
+    };
+    const name = round.ticker ? `${round.ticker} ${round.year || ""}`.trim() : "—";
+    const rCell = td(fmtR(round.r), "history-r");
+    rCell.style.color = rColor(round.r);
+    tr.append(
+      td(`${i + 1}.`, "history-no"),
+      td(resultEmoji(round), "history-emoji"),
+      td(name, "history-name"),
+      // Stop-nivån är meningslös för Avstå — ingen position togs.
+      td(round.choice === "pass" ? CHOICE_LABEL.pass
+        : `${CHOICE_LABEL[round.choice]} · ${round.stopPct}%`, "history-choice"),
+      rCell,
+    );
+    table.appendChild(tr);
+  });
+  list.appendChild(table);
+}
+
 function showDaySummary() {
   const d = day();
   const total = dayR(d);
   $("summary-emoji").textContent = d.rounds.map(resultEmoji).join(" ");
   $("summary-r").textContent = fmtR(total);
   $("summary-r").style.color = rColor(total);
+  renderRoundHistory(d.rounds);
 
   $("controls").classList.add("hidden");
   $("round-result").classList.add("hidden");
@@ -233,7 +280,13 @@ function revealAndScore(choice) {
   document.querySelectorAll(".decision, .stop-btn").forEach(b => b.disabled = true);
 
   const res = computeR(puzzle, choice, selectedStop);
-  const round = { choice, stopPct: selectedStop, r: Math.round(res.r * 100) / 100, stopped: res.stopped };
+  // ticker och år sparas här och inte bara i puzzle: dagssummeringen ska kunna
+  // visa alla fem rundorna efter en omladdning, då bara sista pusslet laddas om.
+  const round = {
+    choice, stopPct: selectedStop,
+    r: Math.round(res.r * 100) / 100, stopped: res.stopped,
+    ticker: meta.ticker, year: Number(meta.decision.slice(0, 4)),
+  };
 
   if (!practice) {
     const d = day();
@@ -244,6 +297,7 @@ function revealAndScore(choice) {
       const prev = state.lastPlayedDay;
       state.streak = total >= 0 ? (prev === dayIndex - 1 ? (state.streak || 0) : 0) + 1 : 0;
       state.lastPlayedDay = dayIndex;
+      recordDay(state.stats, d.rounds, state.streak);   // efter streaken — maxStreak läser den
     }
     saveState();
   }
@@ -253,14 +307,27 @@ function revealAndScore(choice) {
   const stopLevel = choice === "long" ? ENTRY - selectedStop : ENTRY + selectedStop;
   const shapes = stopShapes(choice, stopLevel);
   let n = puzzle.visible;
-  const timer = setInterval(() => {
-    n++;
-    drawChart(n, shapes);
-    if (n >= puzzle.o.length) {
-      clearInterval(timer);
-      showRoundResult(round);
-    }
-  }, 200);
+  const finish = () => {
+    if (!playback) return;                 // redan avslutad
+    clearInterval(playback.timer);
+    playback = null;
+    drawChart(puzzle.o.length, shapes);
+    showRoundResult(round);
+  };
+  playback = {
+    timer: setInterval(() => {
+      n++;
+      if (n >= puzzle.o.length) { finish(); return; }
+      drawChart(n, shapes);
+    }, 200),
+    finish,
+  };
+}
+
+// Hoppa direkt till facit. Tio candles à 200 ms × fem rundor är tio sekunders
+// väntan per dag för den som spelar varje morgon.
+function skipPlayback() {
+  if (playback) playback.finish();
 }
 
 function showLoadError() {
@@ -272,7 +339,7 @@ function showLoadError() {
 
 // Returnerar true om rundan laddades. Ett trasigt eller saknat pussel får
 // aldrig bli ett obehandlat promise-fel — då står spelaren med en vit ruta.
-async function loadRound(round) {
+async function loadRound(round, showControls = true) {
   try {
     const resp = await fetch(`puzzles/${fileIndexFor(round)}.json`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -292,7 +359,9 @@ async function loadRound(round) {
   document.querySelectorAll(".decision, .stop-btn").forEach(b => b.disabled = false);
   $("round-result").classList.add("hidden");
   $("day-summary").classList.add("hidden");
-  $("controls").classList.remove("hidden");
+  // Vid omladdning av en färdigspelad dag laddas sista pusslet bara för att
+  // ritas bakom summeringen — då ska knapparna aldrig visas.
+  if (showControls) $("controls").classList.remove("hidden");
   updateHeader();
   return true;
 }
@@ -316,6 +385,130 @@ $("btn-long").addEventListener("click", () => revealAndScore("long"));
 $("btn-short").addEventListener("click", () => revealAndScore("short"));
 $("btn-pass").addEventListener("click", () => revealAndScore("pass"));
 
+// Klick i charten hoppar över utspelningen.
+$("chart").addEventListener("click", skipPlayback);
+
+// --- Tangentbord ---------------------------------------------------------------
+// L/S/A väljer riktning, 1/2/3 stop-nivå, Enter går vidare, mellanslag hoppar
+// över utspelningen. Klickar bara på knappar som faktiskt är aktiva, så
+// genvägarna kan aldrig göra något musen inte kunde.
+const KEY_DECISION = { l: "btn-long", s: "btn-short", a: "btn-pass", p: "btn-pass" };
+const KEY_STOP = { 1: "2", 2: "5", 3: "8" };
+
+// Alla beslutsknappar bor i #controls, så det är den sektionen som avgör om
+// ett val är möjligt just nu — inte knappens närmaste förälder (#decision-row,
+// som aldrig döljs).
+function clickDecision(id) {
+  if ($("controls").classList.contains("hidden")) return;
+  const btn = $(id);
+  if (btn && !btn.disabled) btn.click();
+}
+
+document.addEventListener("keydown", (event) => {
+  // Aldrig kapa tangenter från namnfältet, och aldrig krocka med webbläsarens
+  // egna genvägar (Ctrl/Cmd/Alt).
+  if (event.target.tagName === "INPUT" || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (!$("stats-backdrop").classList.contains("hidden")) return;   // modalen äger tangenterna
+
+  const key = event.key.toLowerCase();
+  if (key === " " || key === "spacebar") {
+    if (playback) { event.preventDefault(); skipPlayback(); }
+    return;
+  }
+  if (key === "enter") {
+    if (!$("round-result").classList.contains("hidden")) { event.preventDefault(); $("btn-next").click(); }
+    return;
+  }
+  if (KEY_STOP[key] && !$("controls").classList.contains("hidden")) {
+    const btn = document.querySelector(`.stop-btn[data-stop="${KEY_STOP[key]}"]`);
+    if (btn && !btn.disabled) btn.click();
+    return;
+  }
+  if (KEY_DECISION[key]) clickDecision(KEY_DECISION[key]);
+});
+
+// --- Statistik --------------------------------------------------------------------
+// Siffrorna kommer från state.stats, som aggregeras vid varje avslutad dag.
+// Att räkna om dem ur state.days går inte: pruneDays behåller bara 30 dagar.
+function renderStats() {
+  const s = statsSummary(state.stats);
+  const empty = s.days === 0;
+  $("stats-empty").classList.toggle("hidden", !empty);
+  $("stats-tiles").classList.toggle("hidden", empty);
+  $("stats-choices").classList.toggle("hidden", empty);
+  if (empty) { $("stats-note").textContent = ""; return; }
+
+  const tiles = [
+    ["Spelade dagar", String(s.days)],
+    ["Positiva dagar", `${s.positivePct}%`],
+    ["Snitt per dag", fmtR(s.avgR)],
+    ["Bästa dag", fmtR(s.bestDay)],
+    ["Nuvarande streak", `🔥 ${state.streak || 0}`],
+    ["Längsta streak", `🔥 ${s.maxStreak}`],
+  ];
+  const tileBox = $("stats-tiles");
+  tileBox.innerHTML = "";
+  for (const [label, value] of tiles) {
+    const tile = document.createElement("div");
+    tile.className = "stat-tile";
+    const v = document.createElement("div");
+    v.className = "stat-value";
+    v.textContent = value;
+    const l = document.createElement("div");
+    l.className = "stat-label";
+    l.textContent = label;
+    tile.append(v, l);
+    tileBox.appendChild(tile);
+  }
+
+  const table = $("stats-choices");
+  table.innerHTML = "";
+  const header = document.createElement("tr");
+  for (const text of ["", "Antal", "Träff", "Snitt"]) {
+    const th = document.createElement("th");
+    th.textContent = text;
+    header.appendChild(th);
+  }
+  table.appendChild(header);
+  for (const name of ["long", "short", "pass"]) {
+    const choice = s.choices[name];
+    const tr = document.createElement("tr");
+    const td = (txt) => { const el = document.createElement("td"); el.textContent = txt; return el; };
+    // Avstå ger alltid exakt 0R — en "träffprocent" där vore bara vilseledande.
+    tr.append(
+      td(CHOICE_LABEL[name]),
+      td(String(choice.n)),
+      td(name === "pass" ? "—" : `${choice.winPct}%`),
+      td(name === "pass" ? "—" : fmtR(choice.avgR)),
+    );
+    table.appendChild(tr);
+  }
+
+  $("stats-note").textContent = s.days === 1
+    ? "Baserat på 1 spelad dag."
+    : `Baserat på ${s.days} spelade dagar.`;
+}
+
+function openStats() {
+  renderStats();
+  $("stats-backdrop").classList.remove("hidden");
+  $("btn-stats-close").focus();
+}
+function closeStats() {
+  $("stats-backdrop").classList.add("hidden");
+  $("btn-stats").focus();
+}
+
+$("btn-stats").addEventListener("click", openStats);
+$("btn-stats-close").addEventListener("click", closeStats);
+// Klick på bakgrunden stänger — men inte klick inuti panelen.
+$("stats-backdrop").addEventListener("click", (event) => {
+  if (event.target === $("stats-backdrop")) closeStats();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("stats-backdrop").classList.contains("hidden")) closeStats();
+});
+
 // --- Delning ------------------------------------------------------------------------
 function shareText() {
   const d = day();
@@ -325,6 +518,13 @@ function shareText() {
   const url = (window.CHARTLE_CONFIG || {}).SHARE_URL || (location.origin + location.pathname);
   return txt + "\n" + url;
 }
+
+// Övningsläget fanns bara som ?p=N i README. Ett slumpat pussel ger spelet
+// innehåll efter dagens fem rundor, utan att röra streak eller poäng.
+$("btn-practice").addEventListener("click", () => {
+  const idx = Math.floor(Math.random() * ChartleGame.TOTAL_PUZZLES);
+  location.href = `?p=${idx}`;
+});
 
 $("btn-share").addEventListener("click", async () => {
   const txt = shareText();
@@ -358,11 +558,13 @@ async function submitScore() {
   const name = $("lb-name").value.trim();
   if (!name) { $("lb-feedback").textContent = "Skriv ett namn först."; return; }
   if (puzzleNo < 1) { $("lb-feedback").textContent = "Chartle har inte startat än."; return; }
-  state.playerName = name;
-  saveState();
 
   $("btn-submit-score").disabled = true;
   $("lb-feedback").textContent = "Skickar…";
+  // Ett 400 betyder att servern avvisade själva innehållet — samma data ger
+  // samma svar hur många gånger man än trycker. Att då skriva "försök igen"
+  // och släppa knappen fri sätter spelaren i en loop utan utväg.
+  let permanent = false;
   try {
     const resp = await lbRequest("scores", {
       method: "POST",
@@ -375,21 +577,27 @@ async function submitScore() {
     });
     if (resp.ok || resp.status === 409) {   // 409 = redan inskickad idag
       day().submitted = true;
+      state.playerName = name;              // sparas först när det gick vägen
       saveState();
       $("lb-feedback").textContent = "Inskickat! 🏆";
       $("lb-submit-row").classList.add("hidden");
       renderLeaderboard();
       return;
     }
-    $("lb-feedback").textContent = resp.status === 429
-      ? "För många inskick — vänta en stund."
-      : "Kunde inte skicka in — försök igen.";
+    if (resp.status === 429) {
+      $("lb-feedback").textContent = "För många inskick — vänta en stund.";
+    } else if (resp.status === 400) {
+      permanent = true;
+      $("lb-feedback").textContent = "Servern kunde inte ta emot resultatet. Dagens poäng finns kvar lokalt.";
+    } else {
+      $("lb-feedback").textContent = "Kunde inte skicka in — försök igen.";
+    }
   } catch (err) {
     console.error("Inskick misslyckades:", err);
     $("lb-feedback").textContent = "Ingen kontakt med servern — försök igen.";
   } finally {
-    // Knappen måste tillbaka även vid nätverksfel, annars sitter spelaren fast.
-    if (!day().submitted) $("btn-submit-score").disabled = false;
+    // Knappen måste tillbaka vid nätverksfel, annars sitter spelaren fast.
+    if (!day().submitted && !permanent) $("btn-submit-score").disabled = false;
   }
 }
 
@@ -442,6 +650,7 @@ document.querySelectorAll(".lb-tab").forEach(btn => {
     document.querySelectorAll(".lb-tab").forEach(b => b.classList.remove("selected"));
     btn.classList.add("selected");
     lbTab = btn.dataset.tab;
+    $("lb-feedback").textContent = "";   // gällde den förra vyn
     renderLeaderboard();
   });
 });
@@ -450,10 +659,18 @@ document.querySelectorAll(".lb-tab").forEach(btn => {
 function init() {
   updateHeader();
   showCalendarNotice();
-  if (practice) { loadRound(0); return; }
+  if (practice) {
+    $("practice-banner").classList.remove("hidden");
+    loadRound(0);
+    return;
+  }
   const d = day();
   if (d.rounds.length >= ROUNDS) {
-    loadRound(ROUNDS - 1).then((ok) => {   // visa sista charten fullt utspelad bakom summeringen
+    // #controls är synlig i HTML från början, så vid omladdning av en färdig
+    // dag ritas beslutsknapparna upp direkt och ligger kvar tills fetchen är
+    // klar. Dölj dem innan laddningen i stället.
+    $("controls").classList.add("hidden");
+    loadRound(ROUNDS - 1, false).then((ok) => {   // sista charten fullt utspelad bakom summeringen
       if (!ok) return;
       const last = d.rounds[ROUNDS - 1];
       const stopLevel = last.choice === "long" ? ENTRY - last.stopPct : ENTRY + last.stopPct;

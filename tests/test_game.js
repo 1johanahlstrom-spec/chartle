@@ -107,7 +107,86 @@ test("avstå ger alltid 0R", () => {
   assert.deepStrictEqual(game.computeR(p, "pass", 5), { r: 0, stopped: false });
 });
 
-// --- 4. MA läcker inte framtiden --------------------------------------------------
+// --- 4. Statistik ------------------------------------------------------------------
+// Bygger en avslutad dag av R-värden. Val väljs efter tecknet så att
+// riktningsstatistiken går att kontrollera.
+function makeDay(values) {
+  return values.map((r) => ({ choice: r === 0 ? "pass" : r > 0 ? "long" : "short", r }));
+}
+
+test("recordDay summerar dagar, bästa dag och maxstreak", () => {
+  const stats = game.emptyStats();
+  game.recordDay(stats, makeDay([1, 2, 0]), 1);      // total +3
+  game.recordDay(stats, makeDay([-1, -2, 0]), 0);    // total -3
+  game.recordDay(stats, makeDay([4, 0, 0]), 1);      // total +4
+
+  assert.strictEqual(stats.days, 3);
+  assert.strictEqual(stats.positiveDays, 2);
+  assert.strictEqual(stats.sumR, 4);
+  assert.strictEqual(stats.bestDay, 4);
+  assert.strictEqual(stats.maxStreak, 1);
+});
+
+test("en dag på exakt 0R räknas som positiv — samma tröskel som streaken", () => {
+  const stats = game.emptyStats();
+  game.recordDay(stats, makeDay([1, -1]), 1);
+  assert.strictEqual(stats.positiveDays, 1);
+  assert.strictEqual(stats.bestDay, 0);              // 0, inte null
+});
+
+test("riktningsstatistiken räknar träffar och snitt per val", () => {
+  const stats = game.emptyStats();
+  game.recordDay(stats, makeDay([2, -1, 0, 4, 0]), 1);
+  const summary = game.statsSummary(stats);
+
+  assert.strictEqual(summary.choices.long.n, 2);     // +2 och +4
+  assert.strictEqual(summary.choices.long.winPct, 100);
+  assert.strictEqual(summary.choices.long.avgR, 3);
+  assert.strictEqual(summary.choices.short.n, 1);    // -1, ingen träff
+  assert.strictEqual(summary.choices.short.winPct, 0);
+  assert.strictEqual(summary.choices.pass.n, 2);
+});
+
+test("statsSummary ger nollor och inga NaN utan spelade dagar", () => {
+  const summary = game.statsSummary(game.emptyStats());
+  assert.strictEqual(summary.days, 0);
+  assert.strictEqual(summary.positivePct, 0);
+  assert.strictEqual(summary.avgR, 0);
+  assert.strictEqual(summary.bestDay, null);
+  for (const name of ["long", "short", "pass"]) {
+    assert.strictEqual(summary.choices[name].avgR, 0, name);
+    assert.strictEqual(summary.choices[name].winPct, 0, name);
+  }
+});
+
+test("migrering från v2 räknar bara dagar som spelats klart", () => {
+  const days = {
+    5: { rounds: makeDay([1, 1, 1, 1, 1]) },         // klar → +5R
+    6: { rounds: makeDay([2, -1, 0]) },              // avbruten mitt i dagen
+    7: { rounds: makeDay([-1, -1, -1, -1, -1]) },    // klar → -5R
+  };
+  const stats = game.statsFromDays(days, ROUNDS);
+  assert.strictEqual(stats.days, 2);
+  assert.strictEqual(stats.sumR, 0);
+  assert.strictEqual(stats.bestDay, 5);
+  assert.strictEqual(stats.positiveDays, 1);
+});
+
+test("migrering utan sparade dagar ger tom men giltig statistik", () => {
+  assert.deepStrictEqual(game.statsFromDays(undefined, ROUNDS), game.emptyStats());
+  assert.deepStrictEqual(game.statsFromDays({}, ROUNDS), game.emptyStats());
+});
+
+test("statistiken överlever att state.days städas bort", () => {
+  // Poängen med att aggregera: stats får inte krympa när pruneDays kastar dagar.
+  const stats = game.emptyStats();
+  for (let i = 0; i < 40; i++) game.recordDay(stats, makeDay([1, 1, 1, 1, 1]), i + 1);
+  assert.strictEqual(stats.days, 40);
+  assert.strictEqual(stats.maxStreak, 40);
+  assert.strictEqual(game.statsSummary(stats).avgR, 5);
+});
+
+// --- 5. MA läcker inte framtiden --------------------------------------------------
 test("sma ger null för de första (period-1) punkterna", () => {
   const out = game.sma([1, 2, 3, 4, 5], 3);
   assert.deepStrictEqual(out.slice(0, 2), [null, null]);

@@ -67,9 +67,90 @@
     return { r, stopped: false };
   }
 
+  // --- Statistik ---------------------------------------------------------
+  // Aggregeras EN gång per avslutad dag och lagras separat från state.days.
+  // Det är hela poängen: pruneDays behåller bara de 30 senaste dagarna, så
+  // statistik som räknas om ur state.days skulle krympa bakåt över tid.
+  function emptyStats() {
+    return {
+      days: 0,            // avslutade dagar (alla ROUNDS rundor spelade)
+      positiveDays: 0,    // dagar med total R >= 0, samma tröskel som streaken
+      sumR: 0,            // summan av de dagar som räknats in här
+      bestDay: null,      // null = ingen dag spelad än, till skillnad från 0R
+      maxStreak: 0,
+      choices: {
+        long: { n: 0, wins: 0, sumR: 0 },
+        short: { n: 0, wins: 0, sumR: 0 },
+        pass: { n: 0, wins: 0, sumR: 0 },
+      },
+    };
+  }
+
+  // sumR hålls skild från state.totalR med flit. totalR är livstidssumman och
+  // överlever pruneDays; sumR täcker exakt de dagar som ligger i stats. För en
+  // spelare som migrerar från v2 skiljer de sig — då är sumR/days rätt snitt
+  // och totalR/days fel, eftersom bortstädade dagar finns i den ena men inte
+  // den andra.
+  function recordDay(stats, rounds, streak) {
+    const total = rounds.reduce((sum, round) => sum + round.r, 0);
+    stats.days += 1;
+    stats.sumR = Math.round((stats.sumR + total) * 100) / 100;
+    if (total >= 0) stats.positiveDays += 1;
+    if (stats.bestDay === null || total > stats.bestDay) stats.bestDay = total;
+    stats.maxStreak = Math.max(stats.maxStreak, streak || 0);
+
+    for (const round of rounds) {
+      const choice = stats.choices[round.choice];
+      if (!choice) continue;                     // okänt val i gammal data
+      choice.n += 1;
+      choice.sumR = Math.round((choice.sumR + round.r) * 100) / 100;
+      if (round.r > 0) choice.wins += 1;
+    }
+    return stats;
+  }
+
+  // Migrering v2 → v3: bygg upp statistiken ur de dagar som råkar finnas kvar.
+  // Ofullständig för den som spelat mer än KEEP_DAYS dagar — det är accepterat,
+  // alternativet är att börja på noll för alla befintliga spelare.
+  function statsFromDays(days, roundsPerDay) {
+    const stats = emptyStats();
+    const keys = Object.keys(days || {}).map(Number).sort((a, b) => a - b);
+    for (const key of keys) {
+      const day = days[key];
+      if (day && Array.isArray(day.rounds) && day.rounds.length >= roundsPerDay) {
+        recordDay(stats, day.rounds, 0);
+      }
+    }
+    return stats;
+  }
+
+  // Härledda tal för statistikpanelen. Håller divisionerna på ett ställe så att
+  // 0 spelade dagar aldrig blir NaN i UI:t.
+  function statsSummary(stats) {
+    const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+    const summary = {
+      days: stats.days,
+      positiveDays: stats.positiveDays,
+      positivePct: pct(stats.positiveDays, stats.days),
+      avgR: stats.days ? stats.sumR / stats.days : 0,
+      bestDay: stats.bestDay,
+      maxStreak: stats.maxStreak,
+      choices: {},
+    };
+    for (const [name, choice] of Object.entries(stats.choices)) {
+      summary.choices[name] = {
+        n: choice.n,
+        winPct: pct(choice.wins, choice.n),
+        avgR: choice.n ? choice.sumR / choice.n : 0,
+      };
+    }
+    return summary;
+  }
+
   const api = {
     EPOCH_DAYS, ROUNDS, TOTAL_PUZZLES, DAYS_OF_CONTENT, ENTRY,
     stockholmDayIndex, puzzleFileIndex, sma, computeR,
+    emptyStats, recordDay, statsFromDays, statsSummary,
   };
 
   if (typeof module === "object" && module.exports) module.exports = api;

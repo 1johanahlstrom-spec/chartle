@@ -7,8 +7,9 @@
 //
 // Kollar det som bara syns i en browser: att CSP:n inte blockerar Plotly,
 // att charten faktiskt ritas, att omladdning inte ger en ny gissning, att
-// ett trasigt pussel ger felmeddelande i stället för vit ruta, och att
-// mobilvyn inte scrollar i sidled.
+// ett trasigt pussel ger felmeddelande i stället för vit ruta, att
+// mobilvyn inte scrollar i sidled, och att schemamigreringen v2 → v3 av
+// riktig localStorage ger rätt statistik.
 const puppeteer = require("puppeteer");
 
 const BASE = process.env.CHARTLE_URL || "http://127.0.0.1:8137";
@@ -114,6 +115,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     total: document.querySelector("#summary-r").textContent,
     lbVisible: !!document.querySelector("#lb-list"),
     state: JSON.parse(localStorage.getItem("chartle")),
+    // Rundhistoriken: en rad per spelad runda, med ticker och R.
+    history: [...document.querySelectorAll("#round-history tr")].map((tr) =>
+      [...tr.querySelectorAll("td")].map((td) => td.textContent)),
   }));
   log("\n4. Dagens resultat:", summary.emoji, summary.total);
   log("   streak:", summary.state.streak, "| totalR:", summary.state.totalR,
@@ -121,6 +125,117 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (summary.emoji.split(" ").filter(Boolean).length !== 5)
     problems.push(`Emoji-raden har ${summary.emoji.split(" ").length} tecken, väntade 5`);
   if (!summary.state.playerId) problems.push("playerId saknas");
+
+  // ---- 4b. Rundhistorik: emoji-raden ska gå att tyda ----
+  log("   rundhistorik:");
+  summary.history.forEach((row) => log("     " + row.join("  ")));
+  if (summary.history.length !== 5)
+    problems.push(`Rundhistoriken har ${summary.history.length} rader, väntade 5`);
+  // Ticker sparas på rundan vid beslutet — saknas den visas "—", vilket
+  // betyder att fältet inte skrevs och historiken efter omladdning blir tom.
+  const missingTicker = summary.history.filter((row) => !row[2] || row[2] === "—");
+  if (missingTicker.length)
+    problems.push(`${missingTicker.length} rundor saknar ticker i historiken`);
+  const storedRounds = summary.state.days[Object.keys(summary.state.days)[0]].rounds;
+  if (!storedRounds.every((r) => r.ticker && r.year))
+    problems.push("ticker/year sparades inte på rundorna i localStorage");
+  // Historikens R-kolumn måste matcha det som faktiskt räknades.
+  summary.history.forEach((row, i) => {
+    const shown = parseFloat(row[4]);
+    if (Math.abs(shown - storedRounds[i].r) > 0.06)
+      problems.push(`Runda ${i + 1}: historiken visar ${row[4]}, sparat ${storedRounds[i].r}R`);
+  });
+
+  // ---- 4c. Statistikpanelen ----
+  if (summary.state.v !== 3) problems.push(`state.v är ${summary.state.v}, väntade 3`);
+  await page.click("#btn-stats");
+  await page.waitForSelector("#stats-backdrop:not(.hidden)", { timeout: 5000 });
+  const stats = await page.evaluate(() => ({
+    tiles: [...document.querySelectorAll(".stat-tile")].map((t) => [
+      t.querySelector(".stat-label").textContent,
+      t.querySelector(".stat-value").textContent,
+    ]),
+    choiceRows: [...document.querySelectorAll("#stats-choices tr")].slice(1).map((tr) =>
+      [...tr.querySelectorAll("td")].map((td) => td.textContent)),
+    note: document.querySelector("#stats-note").textContent,
+    emptyHidden: document.querySelector("#stats-empty").classList.contains("hidden"),
+    stored: JSON.parse(localStorage.getItem("chartle")).stats,
+  }));
+  log("\n4c. Statistik:", JSON.stringify(stats.tiles), "|", stats.note);
+  stats.choiceRows.forEach((row) => log("     " + row.join("  ")));
+  if (stats.tiles.length !== 6) problems.push(`Statistiken visar ${stats.tiles.length} rutor, väntade 6`);
+  if (!stats.emptyHidden) problems.push("Tomtexten visas trots en spelad dag");
+  if (stats.stored.days !== 1) problems.push(`stats.days är ${stats.stored.days}, väntade 1`);
+  // Summan av rundornas val måste stämma med ROUNDS — annars tappas rundor
+  // i aggregeringen och statistiken glider tyst isär från spelhistoriken.
+  const counted = ["long", "short", "pass"].reduce((s, c) => s + stats.stored.choices[c].n, 0);
+  if (counted !== 5) problems.push(`Statistiken räknade ${counted} rundor, väntade 5`);
+  if (stats.choiceRows.length !== 3)
+    problems.push(`Valtabellen har ${stats.choiceRows.length} rader, väntade 3`);
+  // Avstå ger alltid 0R — träff och snitt ska vara utelämnade, inte "0%".
+  const passRow = stats.choiceRows[2];
+  if (passRow[2] !== "—" || passRow[3] !== "—")
+    problems.push(`Avstå-raden visar ${passRow[2]}/${passRow[3]}, väntade —/—`);
+
+  if (process.env.CHARTLE_SCREENSHOTS) await page.screenshot({ path: "statistik.png" });
+  await page.keyboard.press("Escape");
+  await sleep(200);
+  const closed = await page.evaluate(() =>
+    document.querySelector("#stats-backdrop").classList.contains("hidden"));
+  log("   stängs med Escape:", closed);
+  if (!closed) problems.push("Escape stängde inte statistikpanelen");
+
+  // ---- 4d. Tangentbord, skip och övningsläge ----
+  // Körs i övningsläge så att dagens sparade resultat inte påverkas. Pussel
+  // 1246 är GME-squeezen 2021-02-23 (+449 % på tio dagar) — samma pussel som
+  // avslöjade att serverns gamla MAX_DAY_R på 40 avvisade ärliga resultat.
+  const kb = await browser.newPage();
+  watch(kb, "tangentbord");
+  // localStorage delas mellan alla sidor på samma origin — utan en rensning
+  // här ser övningsläget dagen som huvudsidan redan spelat, och kontrollen
+  // "övningsläget sparar inget" blir meningslös.
+  await kb.goto(`${BASE}/?p=1246`, { waitUntil: "domcontentloaded" });
+  await kb.evaluate(() => localStorage.clear());
+  await kb.goto(`${BASE}/?p=1246`, { waitUntil: "networkidle0" });
+  await sleep(600);
+  const practiceUi = await kb.evaluate(() => ({
+    banner: !document.querySelector("#practice-banner").classList.contains("hidden"),
+    puzzleNo: document.querySelector("#puzzle-no").textContent,
+    shortcuts: !!document.querySelector("#shortcuts"),
+  }));
+  log("\n4d. Övningsläge:", JSON.stringify(practiceUi));
+  if (!practiceUi.banner) problems.push("Övningsbannern visas inte i ?p=-läget");
+
+  await kb.keyboard.press("1");                    // 1 = 2 % stop
+  const stopAfterKey = await kb.evaluate(() =>
+    document.querySelector(".stop-btn.selected").dataset.stop);
+  log("   tangent 1 valde stop:", stopAfterKey + "%");
+  if (stopAfterKey !== "2") problems.push(`Tangent 1 gav stop ${stopAfterKey}%, väntade 2%`);
+
+  const started = Date.now();
+  await kb.keyboard.press("l");                    // l = long
+  await sleep(300);                                // låt utspelningen komma igång
+  await kb.keyboard.press("Space");                // hoppa över resten
+  await kb.waitForSelector("#round-result:not(.hidden)", { timeout: 5000 });
+  const skipped = Date.now() - started;
+  const afterSkip = await kb.evaluate(() => ({
+    score: document.querySelector("#result-score").textContent,
+    candles: document.querySelectorAll("#chart .cartesianlayer .trace path.box").length,
+    stored: localStorage.getItem("chartle"),
+  }));
+  log("   long via tangent, skip efter", skipped, "ms →", afterSkip.score);
+  log("   candles efter skip:", afterSkip.candles);
+  // Full utspelning är 10 × 200 ms. Skip ska korta det rejält men ändå rita ut allt.
+  if (skipped > 1500) problems.push(`Skip tog ${skipped} ms — utspelningen avbröts inte`);
+  if (afterSkip.candles !== 70) problems.push(`Efter skip ritades ${afterSkip.candles}/70 candles`);
+  // 2 %-stop på ett +449 %-utfall ger +224.5R. Om den siffran ändras har
+  // antingen pusseldatan eller computeR ändrats — och serverns tak måste följa med.
+  if (!afterSkip.score.includes("+224.5R"))
+    problems.push(`Väntade +224.5R på pussel 1246, fick "${afterSkip.score}"`);
+  // Övningsläget får aldrig skriva speldata.
+  const practiceState = JSON.parse(afterSkip.stored || "{}");
+  if (Object.keys(practiceState.days || {}).length)
+    problems.push("Övningsläget sparade en spelad dag");
 
   // ---- 5. Leaderboard laddar ----
   await sleep(1200);
@@ -177,6 +292,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await mob.screenshot({ path: "mobil.png" });
     await page.screenshot({ path: "desktop.png", fullPage: true });
   }
+
+  // ---- 9. Migrering v2 → v3 av befintligt localStorage ----
+  // Måste köras i browsern: migreringen ligger i app.js modulnivå och beror på
+  // att den körs FÖRE pruneDays. Ett enhetstest av statsFromDays fångar inte
+  // ordningen.
+  const mig = await browser.newPage();
+  watch(mig, "migrering");
+  await mig.goto(BASE, { waitUntil: "domcontentloaded" });
+  await mig.evaluate(() => {
+    const round = (choice, r) => ({ choice, stopPct: 5, r, stopped: false });
+    localStorage.setItem("chartle", JSON.stringify({
+      v: 2, totalR: 12.5, streak: 3, lastPlayedDay: 1,
+      playerId: "11111111-1111-4111-8111-111111111111",
+      days: {
+        1: {                                   // klar dag: +2 +1 +0 -1 +3 = +5R
+          rounds: [round("long", 2), round("short", 1), round("pass", 0),
+                   round("long", -1), round("long", 3)],
+        },
+        2: { rounds: [round("long", -1), round("pass", 0)] },   // halvspelad
+      },
+    }));
+  });
+  await mig.goto(BASE, { waitUntil: "networkidle0" });
+  await sleep(600);
+  const migrated = await mig.evaluate(() => JSON.parse(localStorage.getItem("chartle")));
+  log("\n9. Migrering v2 → v3:", JSON.stringify(migrated.stats));
+  if (migrated.v !== 3) problems.push(`Migreringen gav v=${migrated.v}, väntade 3`);
+  if (migrated.stats.days !== 1)
+    problems.push(`Migreringen räknade ${migrated.stats.days} dagar, väntade 1 (halvspelad dag ska hoppas över)`);
+  if (migrated.stats.sumR !== 5) problems.push(`stats.sumR är ${migrated.stats.sumR}, väntade 5`);
+  if (migrated.stats.bestDay !== 5) problems.push(`stats.bestDay är ${migrated.stats.bestDay}, väntade 5`);
+  if (migrated.stats.maxStreak !== 3)
+    problems.push(`maxStreak är ${migrated.stats.maxStreak}, väntade 3 (befintlig streak ska seedas)`);
+  if (migrated.stats.choices.long.n !== 3 || migrated.stats.choices.long.wins !== 2)
+    problems.push(`long räknades som ${JSON.stringify(migrated.stats.choices.long)}, väntade n=3 wins=2`);
+  // Livstidssumman får inte röras av migreringen.
+  if (migrated.totalR !== 12.5) problems.push(`totalR ändrades till ${migrated.totalR}, väntade 12.5`);
+  // Historiken för v2-rundor saknar ticker — får inte krascha, ska visa "—".
+  const legacy = await mig.evaluate(() => {
+    document.querySelector("#btn-stats").click();
+    const tiles = document.querySelectorAll(".stat-tile").length;
+    document.querySelector("#btn-stats-close").click();
+    return tiles;
+  });
+  if (legacy !== 6) problems.push(`Statistik efter migrering visade ${legacy} rutor, väntade 6`);
 
   await browser.close();
 

@@ -57,6 +57,11 @@ python3 -m http.server 8137
 ```
 
 Övningsläge (påverkar inte streak): `http://localhost:8137/?p=42` laddar pussel 42.
+Nås också från knappen "Träna på ett slumpat chart" i dagssummeringen.
+
+Tangentbord: <kbd>L</kbd> long, <kbd>S</kbd> short, <kbd>A</kbd> avstå,
+<kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> stop 2/5/8 %, mellanslag hoppar över
+utspelningen, <kbd>Enter</kbd> går vidare.
 
 ## Bygga om pusslen
 
@@ -92,6 +97,12 @@ Fördelning: 750 long / 450 short / 625 avstå (neutral) = 5 pussel/dag i 365 da
 - **Poäng & streak**: lagras i localStorage. Dagens poäng = summan av de fem
   rundornas R. Dag med totalt R ≥ 0 förlänger streaken, förlust eller missad
   dag nollar den. Σ i headern är ackumulerad R över alla spelade dagar.
+- **Statistik** (📊 i headern): spelade dagar, andel positiva dagar, snitt-R
+  per dag, bästa dag, längsta streak och träffprocent per riktning. Siffrorna
+  aggregeras i `state.stats` när en dag spelats klart, eftersom `state.days`
+  bara behåller de 30 senaste dagarna.
+- **Rundhistorik**: dagssummeringen listar de fem rundorna med ticker, år,
+  val och R — så att emoji-raden går att lära sig något av.
 
 ## Leaderboard
 
@@ -103,9 +114,17 @@ Spelare identifieras med ett anonymt UUID i localStorage + valfritt namn.
 Poäng skickas in en gång per dag efter femte rundan.
 
 **Leaderboarden är inte fusksäker.** Servern ser aldrig ett pussel — den tar
-emot ett tal. Det finns spärrar mot de billiga attackerna (poängtak ±40R,
+emot ett tal. Det finns spärrar mot de billiga attackerna (poängtak ±300R,
 dagen måste ha inträffat, 10 inskick per timme och IP, ett resultat per spelare
-och dag), men den som vill fuska kan fortfarande göra det. Riktig fusksäkerhet
+och dag), men den som vill fuska kan fortfarande göra det.
+
+Poängtaket är **härlett ur pusseldatan, inte gissat**: R-multipeln har ingen
+övre gräns eftersom nämnaren är stoppavståndet, och ett 2 %-stopp på
+GME-squeezen 2021-02-23 ger +224,5R på en enda runda. Perfekt spel ger som
+mest 251,4R på en dag. Sänk aldrig `MAX_DAY_R` i `server/app.py` utan att
+först cappa R i `computeR` — då avvisas ärligt spelade resultat med 400, och
+spelaren fastnar i "Kunde inte skicka in". Ändras taket byggs `scores`-tabellen
+om automatiskt vid nästa start (SQLite kan inte ALTER:a en CHECK-constraint). Riktig fusksäkerhet
 kräver att servern håller facit och räknar poängen — se "Senare".
 
 ## Köra hela Chartle med Docker och Tailscale Funnel

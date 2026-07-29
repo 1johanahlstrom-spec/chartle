@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chartle — dagens chart-pussel</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=5">
   <!-- Plotly serveras lokalt: inget CDN-beroende, fungerar offline på LAN
        och tillåter en strikt CSP utan 'unsafe-inline'/externa värdar. -->
   <script src="vendor/plotly-2.35.2.min.js" charset="utf-8"></script>
@@ -16,14 +16,17 @@
     <div id="header-stats">
       <span id="total-r" title="Totalpoäng">Σ 0R</span>
       <span id="streak" title="Streak">🔥 0</span>
+      <button id="btn-stats" type="button" title="Statistik" aria-label="Visa statistik">📊</button>
     </div>
   </header>
 
   <p id="tagline">Runda <span id="round-no">1</span> av 5 · Dagens poäng: <span id="day-r">0R</span></p>
 
   <p id="notice" class="hidden"></p>
+  <p id="practice-banner" class="hidden">Övningsläge — påverkar inte streak eller poäng.
+    <a href="./">Tillbaka till dagens Chartle</a></p>
 
-  <div id="chart"></div>
+  <div id="chart" role="img" aria-label="Kursdiagram med 60 candlesticks, MA10, MA20 och volym"></div>
 
   <section id="controls">
     <div id="stop-row">
@@ -37,9 +40,13 @@
       <button id="btn-pass" class="decision">🤚 Avstå</button>
       <button id="btn-short" class="decision">📉 Short</button>
     </div>
+    <p id="shortcuts">Tangenter: <kbd>L</kbd> long · <kbd>S</kbd> short · <kbd>A</kbd> avstå ·
+      <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> stop · <kbd>mellanslag</kbd> hoppa över · <kbd>Enter</kbd> vidare</p>
   </section>
 
-  <section id="round-result" class="hidden">
+  <!-- aria-live: skärmläsare får annars ingenting när facit dyker upp, eftersom
+       resultatet ersätter innehåll i stället för att flytta fokus. -->
+  <section id="round-result" class="hidden" aria-live="polite">
     <div id="result-score"></div>
     <div id="result-facit"></div>
     <button id="btn-next">Nästa chart →</button>
@@ -49,8 +56,10 @@
     <h2>Dagens resultat</h2>
     <div id="summary-emoji"></div>
     <div id="summary-r"></div>
+    <div id="round-history"></div>
     <div id="result-buttons">
       <button id="btn-share">Dela resultat</button>
+      <button id="btn-practice">Träna på ett slumpat chart</button>
     </div>
     <div id="share-feedback"></div>
 
@@ -75,9 +84,22 @@
     <p>Historisk data · inget av detta är finansiell rådgivning</p>
   </footer>
 
+  <div id="stats-backdrop" class="hidden">
+    <section id="stats-panel" role="dialog" aria-modal="true" aria-labelledby="stats-title">
+      <div id="stats-head">
+        <h2 id="stats-title">📊 Din statistik</h2>
+        <button id="btn-stats-close" type="button" aria-label="Stäng">✕</button>
+      </div>
+      <div id="stats-empty" class="hidden">Spela klart en dag så börjar statistiken fyllas på.</div>
+      <div id="stats-tiles"></div>
+      <table id="stats-choices"></table>
+      <p id="stats-note"></p>
+    </section>
+  </div>
+
   <!-- ?v= bumpas vid varje deploy så att ingen kör vidare på cachad kod -->
-  <script src="config.js?v=3"></script>
-  <script src="game.js?v=3"></script>
-  <script src="app.js?v=3"></script>
+  <script src="config.js?v=5"></script>
+  <script src="game.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

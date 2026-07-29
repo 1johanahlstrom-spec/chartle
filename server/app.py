@@ -27,9 +27,18 @@ MAX_LEADERBOARD_ROWS = 100
 EPOCH_DATE = datetime.date(2026, 7, 5)
 GAME_TZ = ZoneInfo("Europe/Stockholm")
 
-# Fem rundor à som mest några R. Taket är inte fusksäkert — servern ser aldrig
-# ett pussel — men det stoppar de uppenbara "day_r: 100"-inskicken.
-MAX_DAY_R = 40.0
+# Taket är HÄRLETT ur pusseldatan, inte gissat — det gamla på 40.0 byggde på
+# antagandet "fem rundor à som mest några R" och avvisade ärligt spelade
+# resultat. R-multipeln har ingen övre gräns: nämnaren är stoppavståndet, så
+# ett 2 %-stopp på GME-squeezen 2021-02-23 (pussel 1246, +449 % på tio dagar)
+# ger +224.5R på en enda runda. En simulering av computeR över alla 365 dagar
+# ger som mest 251.4R på en dag (Chartle #250). 60 av 365 dagar kan passera
+# 40R, och 8 av dem redan med default-stoppet 5 %.
+#
+# Höj det aldrig utan att räkna om mot pusseldatan, och sänk det aldrig utan
+# att först cappa R i computeR — annars fastnar spelaren i "Kunde inte skicka
+# in" utan att ha gjort något fel.
+MAX_DAY_R = 300.0
 
 # Rate limiting per IP. Hindrar att någon fyller databasen med nya UUID:n.
 RATE_LIMIT = 10
@@ -51,24 +60,64 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     return connection
 
 
+def day_r_check() -> str:
+    """CHECK-villkoret för day_r, härlett ur MAX_DAY_R så att de aldrig glider isär."""
+    return f"CHECK (day_r BETWEEN {-MAX_DAY_R:g} AND {MAX_DAY_R:g})"
+
+
+def scores_ddl(table: str = "scores") -> str:
+    return f"""
+        CREATE TABLE {table} (
+            id         INTEGER PRIMARY KEY,
+            day        INTEGER NOT NULL CHECK (day >= 1),
+            player_id  TEXT NOT NULL,
+            name       TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 20),
+            day_r      REAL NOT NULL {day_r_check()},
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (day, player_id)
+        )
+    """
+
+
+def rebuild_scores(db: sqlite3.Connection) -> None:
+    """Bygg om scores-tabellen med aktuellt CHECK-villkor, med raderna kvar.
+
+    SQLite kan inte ALTER:a en CHECK-constraint — tabellen måste skapas på nytt
+    och innehållet kopieras över. Görs i en egen transaktion: Pythons sqlite3
+    öppnar ingen implicit transaktion för DDL, så utan BEGIN skulle ett avbrott
+    mitt i kunna lämna databasen utan scores-tabell.
+    """
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        db.execute("DROP TABLE IF EXISTS scores_rebuild")
+        db.execute(scores_ddl("scores_rebuild"))
+        db.execute(
+            "INSERT INTO scores_rebuild(id, day, player_id, name, day_r, created_at) "
+            "SELECT id, day, player_id, name, day_r, created_at FROM scores"
+        )
+        db.execute("DROP TABLE scores")          # tar med sig tabellens index
+        db.execute("ALTER TABLE scores_rebuild RENAME TO scores")
+        db.execute("COMMIT")
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+    print(f"Byggde om scores-tabellen till {day_r_check()}", flush=True)
+
+
 def init_db(db_path: Path = DB_PATH) -> None:
     # OBS: "with sqlite3.connect(...)" commitar men STÄNGER INTE anslutningen —
     # därför database(), som gör båda.
     with database(db_path) as db:
         db.execute("PRAGMA journal_mode = WAL")
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS scores (
-                id         INTEGER PRIMARY KEY,
-                day        INTEGER NOT NULL CHECK (day >= 1),
-                player_id  TEXT NOT NULL,
-                name       TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 20),
-                day_r      REAL NOT NULL CHECK (day_r BETWEEN -100 AND 100),
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (day, player_id)
-            )
-            """
-        )
+        existing = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scores'"
+        ).fetchone()
+        if existing is None:
+            db.execute(scores_ddl())
+        elif day_r_check() not in existing["sql"]:
+            # Databaser skapade före höjningen av MAX_DAY_R har kvar det gamla
+            # taket i schemat och skulle avvisa giltiga poäng på SQL-nivå.
+            rebuild_scores(db)
         db.execute(
             "CREATE INDEX IF NOT EXISTS scores_day_r_idx ON scores(day, day_r DESC)"
         )
