@@ -6,9 +6,10 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
 ## Arkitektur i korthet
 
 - `pipeline/` — Python-skript som körs EN gång lokalt för att generera pussel.
-  Kräver `rawdata.pkl` (skapas av `fetch_data.py`, gitignorerad). Determinism:
+  Kräver `rawdata-bundle.pkl` (skapas av `fetch_data.py`, gitignorerad;
+  äldre `rawdata.pkl` + `categories.pkl` stöds). Determinism:
   seed 42, samma rådata → samma 1825 pussel.
-- `docs/` — webbklienten (vanilla JS + Plotly via CDN, ingen byggkedja).
+- `docs/` — webbklienten (vanilla JS + självhostad Plotly, ingen byggkedja).
 - `server/` — leaderboard-API med Pythons standardbibliotek och SQLite.
 - `compose.yaml` + `Caddyfile` — egenhostad drift på localhost:8137; Tailscale
   Funnel publicerar porten med HTTPS på Funnel-port 10000.
@@ -29,8 +30,8 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
 - **Deploy**: egen Ubuntu-server via `compose.yaml`. Caddy serverar `docs/` och
   proxar `/api/*` på `127.0.0.1:8137`; Tailscale Funnel sköter publik HTTPS.
 - **Priser i pussel-JSON är normaliserade**: sista synliga close = 100.
-  All poänglogik (R-multiplar, stops) i `app.js` bygger på det.
-- **MA10/MA20 räknas klientsidan** i `app.js` (`sma()`), inte i pusseldatan.
+  All poänglogik (R-multiplar, stops) i `game.js` bygger på det.
+- **MA10/MA20 räknas klientsidan** i `game.js` (`sma()`), inte i pusseldatan.
   Måste beräknas på `puzzle.c.slice(0, n)` — aldrig hela serien — annars läcker
   medelvärdet framtida candles under de 10 utspelningsdagarna. Första
   (period-1) punkterna är `null` så Plotly inte ritar en ofullständig linje.
@@ -53,7 +54,7 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
 - **Avnoterade tickers**: yfinance tappar historik när bolag avnoteras
   (WBA → ersatt med KHC, SQ → XYZ). Kör om `fetch_data.py` med ersättare om
   fler försvinner. Skriptet avbryter om <90 % av tickerna ger data, så en
-  halvtrasig nedladdning skriver inte över `rawdata.pkl`.
+  halvtrasig nedladdning skriver inte över `rawdata-bundle.pkl`.
 - **Yahoos splithistorik saknar 60-talet.** Två MCD-fönster (pussel 1480 och
   1482) hade en ojusterad 2:1-split i utfallsdelen — charten "kraschade" 50 %
   under utspelningen och 1480 hade dessutom inverterat facit. Lagade med

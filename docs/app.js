@@ -5,7 +5,7 @@
 // testas av tests/test_game.js.
 const {
   ROUNDS, DAYS_OF_CONTENT, ENTRY,
-  stockholmDayIndex, puzzleFileIndex, sma, computeR,
+  stockholmDayIndex, puzzleFileIndex, validatePuzzle, sma, computeR,
   emptyStats, recordDay, statsFromDays, statsSummary,
 } = ChartleGame;
 
@@ -89,6 +89,7 @@ let puzzle = null;
 let meta = null;
 let selectedStop = 5;
 let playback = null;      // pågående utspelning, null när ingen är igång
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const CHART_LAYOUT = {
   paper_bgcolor: "#1a2029",
@@ -322,6 +323,7 @@ function revealAndScore(choice) {
     }, 200),
     finish,
   };
+  if (reduceMotion) playback.finish();
 }
 
 // Hoppa direkt till facit. Tio candles à 200 ms × fem rundor är tio sekunders
@@ -343,10 +345,11 @@ async function loadRound(round, showControls = true) {
   try {
     const resp = await fetch(`puzzles/${fileIndexFor(round)}.json`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const loaded = await resp.json();
+    const loaded = validatePuzzle(await resp.json());
     const parsed = JSON.parse(atob(loaded.meta));
-    if (!Array.isArray(loaded.c) || loaded.c.length <= loaded.visible)
-      throw new Error("Pusslet saknar utfallsdagar");
+    if (!parsed || typeof parsed !== "object" || typeof parsed.ticker !== "string" ||
+        typeof parsed.decision !== "string" || !Number.isFinite(parsed.fwdRetPct))
+      throw new Error("Pusslet har ogiltig metadata");
     puzzle = loaded;
     meta = parsed;
   } catch (err) {
@@ -489,14 +492,17 @@ function renderStats() {
     : `Baserat på ${s.days} spelade dagar.`;
 }
 
+let focusBeforeStats = null;
 function openStats() {
   renderStats();
+  focusBeforeStats = document.activeElement;
   $("stats-backdrop").classList.remove("hidden");
   $("btn-stats-close").focus();
 }
 function closeStats() {
   $("stats-backdrop").classList.add("hidden");
-  $("btn-stats").focus();
+  if (focusBeforeStats && typeof focusBeforeStats.focus === "function") focusBeforeStats.focus();
+  else $("btn-stats").focus();
 }
 
 $("btn-stats").addEventListener("click", openStats);
@@ -506,7 +512,20 @@ $("stats-backdrop").addEventListener("click", (event) => {
   if (event.target === $("stats-backdrop")) closeStats();
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !$("stats-backdrop").classList.contains("hidden")) closeStats();
+  if ($("stats-backdrop").classList.contains("hidden")) return;
+  if (event.key === "Escape") { closeStats(); return; }
+  if (event.key !== "Tab") return;
+  const focusable = [...$("stats-panel").querySelectorAll(
+    'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )];
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault(); first.focus();
+  }
 });
 
 // --- Delning ------------------------------------------------------------------------

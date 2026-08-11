@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 from server.app import (
@@ -80,9 +81,11 @@ class LeaderboardTest(unittest.TestCase):
         future = current_puzzle_no() + 5
         with self.assertRaises(ValueError):
             self.score(future, self.alice, "Alice", 1)
-        # Dagens och morgondagens nummer ska däremot gå igenom (tidszonsglapp).
+        # Dagens nummer går igenom, men serverns Stockholm-klocka är
+        # auktoritativ och morgondagen får inte bokas i förväg.
         self.score(current_puzzle_no(), self.alice, "Alice", 1)
-        self.score(current_puzzle_no() + 1, self.bob, "Bob", 1)
+        with self.assertRaises(ValueError):
+            self.score(current_puzzle_no() + 1, self.bob, "Bob", 1)
 
     def test_absurd_scores_are_rejected(self):
         for bad in (301, -301, 10 ** 400, float("inf"), float("nan")):
@@ -149,7 +152,7 @@ class LeaderboardTest(unittest.TestCase):
 
     def test_check_constraint_matches_the_python_limit(self):
         """SQL-taket och MAX_DAY_R måste följas åt, annars nekar databasen tyst."""
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
             schema = db.execute(
                 "SELECT sql FROM sqlite_master WHERE name = 'scores'"
             ).fetchone()[0]
@@ -174,12 +177,13 @@ class SchemaMigrationTest(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tempdir.name) / "chartle.db"
-        with sqlite3.connect(self.db_path) as db:
-            db.execute(self.OLD_SCHEMA)
-            db.execute(
-                "INSERT INTO scores(day, player_id, name, day_r) VALUES (?, ?, ?, ?)",
-                (1, str(uuid.uuid4()), "Gammal", 12.5),
-            )
+        with closing(sqlite3.connect(self.db_path)) as db:
+            with db:
+                db.execute(self.OLD_SCHEMA)
+                db.execute(
+                    "INSERT INTO scores(day, player_id, name, day_r) VALUES (?, ?, ?, ?)",
+                    (1, str(uuid.uuid4()), "Gammal", 12.5),
+                )
 
     def tearDown(self):
         self.tempdir.cleanup()
@@ -202,7 +206,7 @@ class SchemaMigrationTest(unittest.TestCase):
         init_db(self.db_path)
         init_db(self.db_path)                     # andra starten ska inte röra något
         self.assertEqual(len(today_leaderboard(1, 25, self.db_path)), 1)
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
             leftovers = db.execute(
                 "SELECT name FROM sqlite_master WHERE name = 'scores_rebuild'"
             ).fetchall()

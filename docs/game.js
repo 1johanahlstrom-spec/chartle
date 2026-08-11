@@ -45,6 +45,33 @@
     return ((Math.trunc(raw) % TOTAL_PUZZLES) + TOTAL_PUZZLES) % TOTAL_PUZZLES;
   }
 
+  // Validera hela kontraktet innan data når Plotly eller poänglogiken. Filerna
+  // är statiska, men en ofullständig deploy ska ge ett begripligt laddfel i
+  // stället för en krasch flera funktionsanrop senare.
+  function validatePuzzle(puzzle) {
+    if (!puzzle || typeof puzzle !== "object") throw new Error("Pusslet är inte ett objekt");
+    if (!Number.isInteger(puzzle.visible) || puzzle.visible < 1)
+      throw new Error("Pusslet har ogiltigt visible");
+    const fields = ["o", "h", "l", "c", "v"];
+    const length = Array.isArray(puzzle.o) ? puzzle.o.length : 0;
+    if (length <= puzzle.visible) throw new Error("Pusslet saknar utfallsdagar");
+    for (const field of fields) {
+      const values = puzzle[field];
+      if (!Array.isArray(values) || values.length !== length ||
+          values.some((value) => !Number.isFinite(value)))
+        throw new Error(`Pusslet har ogiltigt fält: ${field}`);
+    }
+    for (let i = 0; i < length; i++) {
+      if (puzzle.l[i] <= 0 || puzzle.v[i] < 0 || puzzle.l[i] > puzzle.h[i] ||
+          puzzle.o[i] < puzzle.l[i] || puzzle.o[i] > puzzle.h[i] ||
+          puzzle.c[i] < puzzle.l[i] || puzzle.c[i] > puzzle.h[i])
+        throw new Error(`Pusslet har ogiltig candle: ${i}`);
+    }
+    if (typeof puzzle.meta !== "string" || !puzzle.meta)
+      throw new Error("Pusslet saknar meta");
+    return puzzle;
+  }
+
   // Glidande medelvärde (SMA) på close. Måste matas med de redan visade
   // candlesen — aldrig hela serien — annars läcker framtida data. De första
   // (period-1) punkterna blir null → Plotly ritar ingen ofullständig linje.
@@ -164,7 +191,7 @@
 
   const api = {
     EPOCH_DAYS, ROUNDS, TOTAL_PUZZLES, DAYS_OF_CONTENT, ENTRY, MAX_R,
-    stockholmDayIndex, puzzleFileIndex, sma, computeR,
+    stockholmDayIndex, puzzleFileIndex, validatePuzzle, sma, computeR,
     emptyStats, recordDay, statsFromDays, statsSummary,
   };
 

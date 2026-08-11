@@ -329,6 +329,15 @@ h1 { font-size: 1.4rem; }
 
 .hidden { display: none !important; }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
 #btn-next {
   background: var(--accent);
   color: #fff;

@@ -1,6 +1,6 @@
 """Steg 1: Hämta historisk dagsdata (OHLCV) för alla tickers och spara lokalt.
 
-Körs en gång. Resultatet sparas som rawdata.pkl så att build_puzzles.py
+Körs en gång. Resultatet sparas som rawdata-bundle.pkl så att build_puzzles.py
 kan jobba offline utan att ladda ner igen.
 
 Spannet är 1962-2024: Yahoo/yfinance har daglig OHLC från 1962-01-02 för de
@@ -58,7 +58,8 @@ print(f"Antal tickers: {len(tickers)}")
 # auto_adjust=True justerar OHLC för både split och utdelning. Det är
 # avgörande: utan det ser varje split ut som en krasch mitt i charten.
 try:
-    data = yf.download(tickers, start="1962-01-01", end="2024-12-31",
+    # yfinance behandlar end som exklusivt; 2025-01-01 inkluderar hela 2024.
+    data = yf.download(tickers, start="1962-01-01", end="2025-01-01",
                        group_by="ticker", auto_adjust=True, threads=True)
 except Exception as error:                  # nätverksfel, API-ändringar, rate limit
     sys.exit(f"AVBRYTER: nedladdningen misslyckades ({error}). Befintlig data är orörd.")
@@ -80,13 +81,13 @@ print(f"OK: {len(ok)}/{len(tickers)} tickers")
 if failed:
     print(f"MISSLYCKADES: {failed}")
 
-# Skriv ALDRIG över en fungerande rawdata.pkl med ett stympat dataset. Filen är
+# Skriv ALDRIG över ett fungerande rådatapaket med ett stympat dataset. Filen är
 # gitignorerad, så det finns ingen kopia att gå tillbaka till.
 min_ok = int(len(tickers) * MIN_OK_FRACTION)
 if len(ok) < min_ok:
     sys.exit(
         f"AVBRYTER: bara {len(ok)} av {len(tickers)} tickers gav data "
-        f"(kräver minst {min_ok}). rawdata.pkl lämnas orörd.\n"
+        f"(kräver minst {min_ok}). rawdata-bundle.pkl lämnas orörd.\n"
         "Är fler bolag avnoterade? Byt ut dem i listorna ovan och kör om."
     )
 
@@ -95,10 +96,16 @@ if len(ok) < min_ok:
 data = data[ok]
 categories_ok = {cat: [t for t in ts if t in ok] for cat, ts in CATEGORIES.items()}
 
-# Atomär skrivning: en krasch mitt i lämnar den gamla filen intakt.
-for frame, name in ((data, "rawdata.pkl"), (categories_ok, "categories.pkl")):
-    tmp = HERE / f"{name}.tmp"
-    pd.to_pickle(frame, tmp)
-    tmp.replace(HERE / name)
+# Data och kategorier hör ihop och skrivs därför som EN atomiskt ersatt fil.
+# Ett avbrott kan aldrig lämna byggsteget med halva den nya generationen.
+bundle = {
+    "version": 1,
+    "generated_at": pd.Timestamp.utcnow().isoformat(),
+    "data": data,
+    "categories": categories_ok,
+}
+tmp = HERE / "rawdata-bundle.pkl.tmp"
+pd.to_pickle(bundle, tmp)
+tmp.replace(HERE / "rawdata-bundle.pkl")
 
-print(f"Klart! Sparat {len(ok)} tickers till {HERE / 'rawdata.pkl'}")
+print(f"Klart! Sparat {len(ok)} tickers till {HERE / 'rawdata-bundle.pkl'}")

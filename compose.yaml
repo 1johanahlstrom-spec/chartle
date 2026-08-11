@@ -40,7 +40,9 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "100.77.124.124:${CHARTLE_PORT:-8137}:80"
+      # Funnel ansluter till localhost. Bindningen är varken publik på LAN eller
+      # beroende av en viss maskins Tailscale-IP.
+      - "127.0.0.1:${CHARTLE_PORT:-8137}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./docs:/srv:ro

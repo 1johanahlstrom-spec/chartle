@@ -3,9 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10141a">
   <title>Chartle — dagens chart-pussel</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css?v=7">
   <!-- Plotly serveras lokalt: inget CDN-beroende, fungerar offline på LAN
        och tillåter en strikt CSP utan 'unsafe-inline'/externa värdar. -->
   <script src="vendor/plotly-2.35.2.min.js" charset="utf-8"></script>
@@ -99,8 +101,9 @@
   </div>
 
   <!-- ?v= bumpas vid varje deploy så att ingen kör vidare på cachad kod -->
-  <script src="config.js?v=6"></script>
-  <script src="game.js?v=6"></script>
-  <script src="app.js?v=6"></script>
+  <script src="config.js?v=7"></script>
+  <script src="game.js?v=7"></script>
+  <script src="app.js?v=7"></script>
+  <script src="pwa.js?v=1"></script>
 </body>
 </html>

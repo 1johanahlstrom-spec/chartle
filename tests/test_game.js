@@ -69,6 +69,25 @@ test("skräpindex ger alltid ett giltigt pussel, aldrig NaN", () => {
   }
 });
 
+test("pusselkontraktet validerar alla serier och candles", () => {
+  const valid = makePuzzle([{ o: 101, h: 103, l: 99, c: 102 }]);
+  valid.v = Array(valid.o.length).fill(10);
+  valid.meta = "e30=";
+  assert.strictEqual(game.validatePuzzle(valid), valid);
+
+  for (const mutate of [
+    (p) => { p.h.pop(); },
+    (p) => { p.v[0] = -1; },
+    (p) => { p.l[0] = 101; },
+    (p) => { p.c[0] = NaN; },
+    (p) => { p.meta = ""; },
+  ]) {
+    const broken = structuredClone(valid);
+    mutate(broken);
+    assert.throws(() => game.validatePuzzle(broken));
+  }
+});
+
 // --- 3. Rättning: gap, exakta träffar och exit -----------------------------------
 test("gap förbi stoppen fylls på open — sämre än -1R", () => {
   // Stop 5 % → stopnivå 95. Dagen öppnar på 90, alltså (90-100)/5 = -2R.

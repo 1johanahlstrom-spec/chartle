@@ -12,4 +12,4 @@ done
 
 echo
 echo "== Leaderboard-API och pusseldata (python) =="
-python3 -m unittest discover -s tests -t . -v
+python3 -W error::ResourceWarning -m unittest discover -s tests -t . -v

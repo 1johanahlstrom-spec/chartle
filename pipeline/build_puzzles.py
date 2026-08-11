@@ -1,4 +1,4 @@
-"""Steg 2-4: Bygg 1825 pussel från rawdata.pkl och skriv dem som JSON till docs/puzzles/.
+"""Steg 2-4: Bygg 1825 pussel från rådatapaketet och skriv JSON till docs/puzzles/.
 
 Varje pussel = 70 handelsdagar: 60 synliga candles + 10 dagars utfall.
 Priser normaliseras så att sista synliga close (entry) = 100.
@@ -6,7 +6,7 @@ Volym normaliseras så att högsta synliga volym = 100.
 Facit (ticker, datum, kategori) base64-kodas i "meta" — lätt obfuskering, som Wordle.
 
 Deterministiskt: samma indata ger alltid samma 1825 pussel (seed 42). Notera att
-"samma indata" betyder samma rawdata.pkl — ny rådata ger en ny ordning. Skriptet
+"samma indata" betyder samma rawdatapaket — ny rådata ger en ny ordning. Skriptet
 vägrar därför skriva över ett befintligt pusselset utan CHARTLE_ALLOW_REBUILD=1.
 """
 
@@ -40,9 +40,9 @@ TARGETS = {"long": 750, "short": 450, "neutral": 625}  # 1825 = 5 pussel/dag i 3
 outdir = ROOT / "docs" / "puzzles"
 
 # Att bygga om numrerar om ALLA pussel: shuffle(seed=42) är bara deterministisk
-# givet exakt samma kandidatlista, och den beror på rawdata.pkl. Ny rådata ger
+# givet exakt samma kandidatlista, och den beror på rådatapaketet. Ny rådata ger
 # ny ordning → spelare får om-numrerade och upprepade pussel, och epoken i
-# docs/app.js pekar fel. Därför krävs ett uttryckligt medgivande.
+# docs/game.js pekar fel. Därför krävs ett uttryckligt medgivande.
 existing = sorted(outdir.glob("*.json")) if outdir.exists() else []
 if existing and os.environ.get("CHARTLE_ALLOW_REBUILD") != "1":
     sys.exit(
@@ -52,8 +52,16 @@ if existing and os.environ.get("CHARTLE_ALLOW_REBUILD") != "1":
         "kör sedan om med CHARTLE_ALLOW_REBUILD=1 om du verkligen menar det."
     )
 
-data = pd.read_pickle(HERE / "rawdata.pkl")
-categories = pd.read_pickle(HERE / "categories.pkl")
+bundle_path = HERE / "rawdata-bundle.pkl"
+if bundle_path.exists():
+    bundle = pd.read_pickle(bundle_path)
+    if not isinstance(bundle, dict) or bundle.get("version") != 1:
+        sys.exit(f"AVBRYTER: okänt format i {bundle_path}")
+    data, categories = bundle["data"], bundle["categories"]
+else:
+    # Bakåtkompatibilitet för det befintliga lokala datasetet.
+    data = pd.read_pickle(HERE / "rawdata.pkl")
+    categories = pd.read_pickle(HERE / "categories.pkl")
 ticker_cat = {t: cat for cat, ts in categories.items() for t in ts}
 tickers = sorted(ticker_cat)
 
@@ -190,9 +198,19 @@ for idx, cand in enumerate(chosen):
     }
     (staging / f"{idx}.json").write_text(json.dumps(puzzle, separators=(",", ":")))
 
-# Allt skrevs utan fel — byt in det nya settet i ett steg.
-shutil.rmtree(outdir, ignore_errors=True)
-staging.rename(outdir)
+# Behåll det gamla settet tills det nya är färdigskrivet och återställ det om
+# namnbytet misslyckas. Då finns alltid minst ett komplett set kvar på disk.
+old = outdir.parent / "puzzles.old"
+shutil.rmtree(old, ignore_errors=True)
+if outdir.exists():
+    outdir.rename(old)
+try:
+    staging.rename(outdir)
+except Exception:
+    if old.exists() and not outdir.exists():
+        old.rename(outdir)
+    raise
+shutil.rmtree(old, ignore_errors=True)
 
 sizes = sum(f.stat().st_size for f in outdir.glob("*.json"))
 print(f"\nSkrev {len(chosen)} pussel till {outdir} ({sizes // 1024} KB totalt)")

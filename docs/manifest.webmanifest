@@ -1,0 +1,20 @@
+{
+  "id": "./",
+  "name": "Chartle — dagens chart-pussel",
+  "short_name": "Chartle",
+  "description": "Fem nya historiska börscharts varje dag.",
+  "lang": "sv",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10141a",
+  "theme_color": "#10141a",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

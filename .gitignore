@@ -2,8 +2,10 @@ venv/
 __pycache__/
 pipeline/rawdata.pkl
 pipeline/categories.pkl
+pipeline/rawdata-bundle.pkl
 pipeline/*.pkl.tmp
 docs/puzzles.new/
+docs/puzzles.old/
 node_modules/
 package.json
 package-lock.json

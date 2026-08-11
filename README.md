@@ -59,6 +59,15 @@ python3 -m http.server 8137
 Övningsläge (påverkar inte streak): `http://localhost:8137/?p=42` laddar pussel 42.
 Nås också från knappen "Träna på ett slumpat chart" i dagssummeringen.
 
+### Installera som app
+
+Chartle har ett webbappmanifest, en egen ikon och offline-stöd. På Firefox för
+Android: öppna Chartle över HTTPS, välj menyn och tryck **Installera** eller
+**Lägg till på startskärmen**. På Firefox för Windows 143 eller senare finns
+webbappsknappen i adressfältet. Lokal utveckling på `localhost` fungerar också,
+men andra okrypterade HTTP-adresser gör det inte eftersom service workers kräver
+en säker kontext.
+
 Tangentbord: <kbd>L</kbd> long, <kbd>S</kbd> short, <kbd>A</kbd> avstå,
 <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd> stop 2/5/8 %, mellanslag hoppar över
 utspelningen, <kbd>Enter</kbd> går vidare.
@@ -69,8 +78,8 @@ utspelningen, <kbd>Enter</kbd> går vidare.
 python3 -m venv venv
 ./venv/bin/pip install -r pipeline/requirements.txt
 cd pipeline
-../venv/bin/python fetch_data.py      # laddar ner rådata → rawdata.pkl
-../venv/bin/python build_puzzles.py   # skriver 365 JSON till docs/puzzles/
+../venv/bin/python fetch_data.py      # laddar ner rådata → rawdata-bundle.pkl
+../venv/bin/python build_puzzles.py   # skriver 1825 JSON till docs/puzzles/
 ```
 
 Deterministiskt: samma rådata ger alltid samma 1825 pussel (seed 42).

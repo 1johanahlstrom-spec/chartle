@@ -23,7 +23,7 @@ DB_PATH = Path(os.environ.get("CHARTLE_DB_PATH", "/data/chartle.db"))
 MAX_BODY_BYTES = 8_192
 MAX_LEADERBOARD_ROWS = 100
 
-# Måste stämma med EPOCH_DAYS och tidszonen i docs/app.js.
+# Måste stämma med EPOCH_DAYS och tidszonen i docs/game.js.
 EPOCH_DATE = datetime.date(2026, 7, 5)
 GAME_TZ = ZoneInfo("Europe/Stockholm")
 
@@ -147,9 +147,9 @@ def clean_score(payload: object) -> tuple[int, str, str, float]:
     day = payload.get("day")
     if isinstance(day, bool) or not isinstance(day, int):
         raise ValueError("Ogiltig dag")
-    # Dagen måste faktiskt ha inträffat. +1 tolererar glappet kring midnatt och
-    # små klockavvikelser hos klienten.
-    if not 1 <= day <= current_puzzle_no() + 1:
+    # Serverns Stockholm-klocka är auktoritativ. Klientens klocka ska inte kunna
+    # boka en rad på morgondagens leaderboard i förväg.
+    if not 1 <= day <= current_puzzle_no():
         raise ValueError("Ogiltig dag")
 
     try:

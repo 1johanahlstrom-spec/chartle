@@ -1,0 +1,33 @@
+name: Tester
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Testsvit
+        env:
+          PYTHONWARNINGS: error::ResourceWarning
+        run: ./tests/run.sh
+      - name: Syntax och Compose-konfiguration
+        run: |
+          python -m compileall -q server pipeline tests
+          node --check docs/game.js
+          node --check docs/app.js
+          node --check docs/pwa.js
+          node --check docs/service-worker.js
+          node --check tests/test_e2e.js
+          docker compose config --quiet

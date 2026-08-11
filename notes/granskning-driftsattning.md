@@ -1,5 +1,10 @@
 # Kodgranskning inför driftsättning — Chartle
 
+> **ARKIVERAD HISTORIK — inte aktuell projektdokumentation.** Statusen nedan
+> avser koden den 2026-07-22 och innehåller avsiktligt gamla radnummer,
+> versionsnummer, testantal och gränsvärden. Se README.md och CLAUDE.md för
+> nuvarande beteende.
+>
 > **Status 2026-07-22: avslutad.** Alla 23 punkter är hanterade — åtgärdade,
 > medvetet accepterade eller medvetet lämnade — plus ett fynd som dök upp
 > först när testerna skrevs (se "Nytt fynd" nedan). Hela spelet är verifierat
