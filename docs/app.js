@@ -6,7 +6,7 @@
 const {
   ROUNDS, DAYS_OF_CONTENT, ENTRY,
   stockholmDayIndex, puzzleFileIndex, validatePuzzle, sma, computeR,
-  emptyStats, recordDay, statsFromDays, statsSummary,
+  emptyStats, recordDay, statsFromDays, statsSummary, sanitizeStoredState,
 } = ChartleGame;
 
 const KEEP_DAYS = 30;                     // så många spelade dagar sparas i localStorage
@@ -29,7 +29,7 @@ function fileIndexFor(round) {
 
 // --- Lagring -----------------------------------------------------------------
 function loadState() {
-  try { return JSON.parse(localStorage.getItem("chartle") || "{}"); }
+  try { return sanitizeStoredState(JSON.parse(localStorage.getItem("chartle") || "{}")); }
   catch { return {}; }
 }
 function saveState() {
@@ -219,11 +219,14 @@ function showRoundResult(round) {
   const price = meta.entryPrice >= 1
     ? ` vid kursen $${meta.entryPrice} (justerat för split och utdelning)`
     : "";
-  $("result-facit").innerHTML =
-    `Det var <strong>${meta.ticker}</strong> (${CATEGORY_LABEL[meta.category] || meta.category}), ` +
-    `beslutsdagen var <strong>${meta.decision}</strong>${price}.<br>` +
-    `De följande 10 dagarna ${dir} aktien <strong>${Math.abs(meta.fwdRetPct)}%</strong>.` +
-    (round.stopped ? " Du blev stoppad på vägen." : "");
+  const fact = $("result-facit");
+  fact.replaceChildren();
+  const strong = (text) => { const el = document.createElement("strong"); el.textContent = text; return el; };
+  fact.append("Det var ", strong(meta.ticker),
+    ` (${CATEGORY_LABEL[meta.category] || meta.category}), beslutsdagen var `,
+    strong(meta.decision), `${price}.`, document.createElement("br"),
+    `De följande 10 dagarna ${dir} aktien `, strong(`${Math.abs(meta.fwdRetPct)}%`), ".",
+    round.stopped ? " Du blev stoppad på vägen." : "");
 
   const done = practice || day().rounds.length >= ROUNDS;
   $("btn-next").textContent = practice ? "Spela igen →"
@@ -313,6 +316,7 @@ function revealAndScore(choice) {
     clearInterval(playback.timer);
     playback = null;
     drawChart(puzzle.o.length, shapes);
+    $("chart").setAttribute("aria-label", "Kursdiagram med 70 candlesticks inklusive tio utfallsdagar, MA10, MA20 och volym");
     showRoundResult(round);
   };
   playback = {
@@ -359,6 +363,7 @@ async function loadRound(round, showControls = true) {
   }
 
   drawChart(puzzle.visible);
+  $("chart").setAttribute("aria-label", "Kursdiagram med 60 candlesticks, MA10, MA20 och volym");
   document.querySelectorAll(".decision, .stop-btn").forEach(b => b.disabled = false);
   $("round-result").classList.add("hidden");
   $("day-summary").classList.add("hidden");
@@ -380,6 +385,7 @@ document.querySelectorAll(".stop-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".stop-btn").forEach(b => b.classList.remove("selected"));
     btn.classList.add("selected");
+    document.querySelectorAll(".stop-btn").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
     selectedStop = parseInt(btn.dataset.stop, 10);
   });
 });
@@ -686,6 +692,7 @@ document.querySelectorAll(".lb-tab").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".lb-tab").forEach(b => b.classList.remove("selected"));
     btn.classList.add("selected");
+    document.querySelectorAll(".lb-tab").forEach(b => b.setAttribute("aria-selected", String(b === btn)));
     lbTab = btn.dataset.tab;
     $("lb-feedback").textContent = "";   // gällde den förra vyn
     renderLeaderboard();

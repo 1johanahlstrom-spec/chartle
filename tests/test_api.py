@@ -1,15 +1,21 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
 import uuid
 from contextlib import closing
 from pathlib import Path
+from unittest import mock
+from urllib.error import HTTPError
+from urllib.request import urlopen
 
 from server.app import (
     LEADERBOARD_WINDOW_DAYS,
     MAX_DAY_R,
     MIN_DAYS_FOR_AVERAGE,
     RateLimiter,
+    ChartleHandler,
+    database_healthy,
     average_leaderboard,
     current_puzzle_no,
     init_db,
@@ -18,6 +24,7 @@ from server.app import (
     total_leaderboard,
     window_leaderboard,
 )
+from http.server import ThreadingHTTPServer
 
 
 class LeaderboardTest(unittest.TestCase):
@@ -229,6 +236,34 @@ class RateLimiterTest(unittest.TestCase):
         limiter = RateLimiter(limit=1, window=0.0)   # allt är omedelbart gammalt
         self.assertTrue(limiter.check("1.2.3.4"))
         self.assertTrue(limiter.check("1.2.3.4"))
+
+
+class HealthTest(unittest.TestCase):
+    def test_database_health_checks_the_real_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chartle.db"
+            self.assertFalse(database_healthy(path))
+            init_db(path)
+            self.assertTrue(database_healthy(path))
+
+    def test_http_health_reports_database_failure(self):
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), ChartleHandler)
+        except PermissionError:
+            self.skipTest("miljön tillåter inte lokala sockets")
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with mock.patch("server.app.database_healthy", return_value=False):
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(f"http://127.0.0.1:{server.server_port}/api/health", timeout=2)
+                self.assertEqual(caught.exception.code, 503)
+                caught.exception.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 if __name__ == "__main__":

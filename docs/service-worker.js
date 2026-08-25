@@ -1,12 +1,14 @@
-const CACHE = "chartle-v1";
+const CACHE = "chartle-v8";
 const APP_SHELL = [
   "./",
-  "style.css?v=7",
-  "config.js?v=7",
-  "game.js?v=7",
-  "app.js?v=7",
-  "pwa.js?v=1",
+  "style.css?v=8",
+  "config.js?v=8",
+  "game.js?v=8",
+  "app.js?v=8",
+  "pwa.js?v=8",
   "favicon.svg",
+  "icon-192.png",
+  "icon-512.png",
   "manifest.webmanifest",
   "vendor/plotly-2.35.2.min.js",
 ];
@@ -52,4 +54,15 @@ self.addEventListener("fetch", (event) => {
       return response;
     }))
   );
+});
+
+// Klienten skickar dagens fem URL:er efter registrering. Då går hela dagens
+// spel att slutföra offline, inte bara de rundor som redan hunnit öppnas.
+self.addEventListener("message", (event) => {
+  if (event.data?.type !== "CACHE_PUZZLES" || !Array.isArray(event.data.urls)) return;
+  const scope = new URL(self.registration.scope);
+  const urls = event.data.urls
+    .filter((url) => /^puzzles\/\d+\.json$/.test(url))
+    .map((url) => new URL(url, scope).href);
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(urls)));
 });

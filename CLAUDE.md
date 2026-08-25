@@ -71,8 +71,8 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
   likviditetsfilter i `build_puzzles.py` (`MIN_LEVELS` distinkta prisnivåer +
   `MAX_FLAT` platta candles) som fångar både gammalt illikvitt och moderna
   penny-stocks (CELH, SPCE). `MAX_PER_YEAR` sprider urvalet över decennierna.
-- Repo-ägare: `1johanahlstrom-spec`, sajt:
-  https://1johanahlstrom-spec.github.io/chartle/
+- Repo-ägare: `1johanahlstrom-spec`. GitHub Pages-adressen är historisk;
+  produktionen körs via Caddy och Tailscale Funnel enligt README.
 
 ## Vanliga kommandon
 

@@ -90,6 +90,8 @@
   // sämre än -1R kan hända — precis som på riktigt. Ingen stop träffad → exit
   // på sista utfallsdagens close. R = resultat / risk.
   function computeR(puzzle, choice, stopPct) {
+    if (!["long", "short", "pass"].includes(choice)) throw new Error("Ogiltigt val");
+    if (!Number.isFinite(stopPct) || stopPct <= 0) throw new Error("Ogiltig stop-nivå");
     if (choice === "pass") return { r: 0, stopped: false };
     const risk = stopPct;
     const stopLevel = choice === "long" ? ENTRY - risk : ENTRY + risk;
@@ -189,10 +191,38 @@
     return summary;
   }
 
+  function isObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  // localStorage är extern indata. En avbruten äldre migrering, ett tillägg eller
+  // manuell redigering ska inte kunna göra hela appen oanvändbar vid uppstart.
+  function sanitizeStoredState(raw) {
+    if (!isObject(raw)) return {};
+    const state = { ...raw };
+    if (!isObject(state.days)) state.days = {};
+    else {
+      state.days = Object.fromEntries(Object.entries(state.days).filter(([, day]) =>
+        isObject(day) && Array.isArray(day.rounds) && day.rounds.every((round) =>
+          isObject(round) && ["long", "short", "pass"].includes(round.choice) &&
+          Number.isFinite(round.r))));
+    }
+    if (!Number.isFinite(state.totalR)) state.totalR = 0;
+    if (!Number.isInteger(state.streak) || state.streak < 0) state.streak = 0;
+    const validChoice = (choice) => isObject(choice) &&
+      [choice.n, choice.wins, choice.sumR].every(Number.isFinite);
+    const validStats = isObject(state.stats) && isObject(state.stats.choices) &&
+      [state.stats.days, state.stats.positiveDays, state.stats.sumR, state.stats.maxStreak]
+        .every(Number.isFinite) &&
+      ["long", "short", "pass"].every((name) => validChoice(state.stats.choices[name]));
+    if (state.stats !== undefined && !validStats) delete state.stats;
+    return state;
+  }
+
   const api = {
     EPOCH_DAYS, ROUNDS, TOTAL_PUZZLES, DAYS_OF_CONTENT, ENTRY, MAX_R,
     stockholmDayIndex, puzzleFileIndex, validatePuzzle, sma, computeR,
-    emptyStats, recordDay, statsFromDays, statsSummary,
+    emptyStats, recordDay, statsFromDays, statsSummary, sanitizeStoredState,
   };
 
   if (typeof module === "object" && module.exports) module.exports = api;

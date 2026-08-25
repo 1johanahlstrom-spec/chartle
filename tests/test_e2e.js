@@ -263,6 +263,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ---- 6. Trasigt pussel ger felmeddelande, inte vit ruta ----
   const broken = await browser.newPage();
   watch(broken, "404");
+  // Dagens pussel förhämtas nu av service workern. Gå förbi den här så att
+  // interceptionen verkligen provar nätverksfelet och inte en cachad kopia.
+  await broken.setBypassServiceWorker(true);
   await broken.setRequestInterception(true);
   broken.on("request", (r) =>
     r.url().includes("/puzzles/") ? r.respond({ status: 404, body: "nope" }) : r.continue());

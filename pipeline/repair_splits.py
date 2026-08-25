@@ -37,14 +37,14 @@ KNOWN_MISSED_SPLITS = [
 
 
 def relabel(fwd_ret_pct: float) -> str:
-    """Etiketten är kosmetisk — spelet poängsätter alltid mot prisserien."""
+    """Använd samma trösklar som generatorn; tvetydiga fall kräver handbeslut."""
     if fwd_ret_pct >= 5:
         return "long"
     if fwd_ret_pct <= -5:
         return "short"
-    if fwd_ret_pct > 0:
-        return "long"
-    return "short" if fwd_ret_pct < 0 else "neutral"
+    if abs(fwd_ret_pct) < 2.5:
+        return "neutral"
+    raise ValueError(f"Tvetydig avkastning {fwd_ret_pct:+.1f}% — välj facit manuellt")
 
 
 def repair(index: int, split_day: int, ratio: float, apply: bool) -> bool:

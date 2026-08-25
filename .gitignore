@@ -7,5 +7,3 @@ pipeline/*.pkl.tmp
 docs/puzzles.new/
 docs/puzzles.old/
 node_modules/
-package.json
-package-lock.json

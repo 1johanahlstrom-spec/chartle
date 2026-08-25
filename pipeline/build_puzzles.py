@@ -27,7 +27,7 @@ VISIBLE = 60          # candles spelaren ser
 OUTCOME = 10          # dagar som spelas fram
 WINDOW = VISIBLE + OUTCOME
 STRIDE = 10           # testa nytt kandidatfönster var 10:e dag
-MIN_GAP = 25          # min avstånd mellan valda fönster i samma ticker
+MIN_GAP = WINDOW      # inget överlapp mellan valda fönster i samma ticker
 MAX_PER_TICKER = 45
 MAX_FLAT = 0.25       # max andel platta candles (high==low) i synligt fönster
 MIN_LEVELS = 25       # min distinkta prisnivåer i synligt fönster (likviditet)
@@ -72,7 +72,7 @@ for ticker in tickers:
     dates = df.index
     o, h, l, c, v = (df[col].to_numpy() for col in ["Open", "High", "Low", "Close", "Volume"])
 
-    for i in range(0, len(df) - WINDOW, STRIDE):
+    for i in range(0, len(df) - WINDOW + 1, STRIDE):
         vis_h, vis_l = h[i:i + VISIBLE], l[i:i + VISIBLE]
         entry = c[i + VISIBLE - 1]
         final = c[i + WINDOW - 1]

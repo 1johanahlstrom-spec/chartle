@@ -7,7 +7,7 @@
   <title>Chartle — dagens chart-pussel</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
   <!-- Plotly serveras lokalt: inget CDN-beroende, fungerar offline på LAN
        och tillåter en strikt CSP utan 'unsafe-inline'/externa värdar. -->
   <script src="vendor/plotly-2.35.2.min.js" charset="utf-8"></script>
@@ -33,9 +33,9 @@
   <section id="controls">
     <div id="stop-row">
       <span>Stop:</span>
-      <button class="stop-btn" data-stop="2">2%</button>
-      <button class="stop-btn selected" data-stop="5">5%</button>
-      <button class="stop-btn" data-stop="8">8%</button>
+      <button class="stop-btn" data-stop="2" aria-pressed="false">2%</button>
+      <button class="stop-btn selected" data-stop="5" aria-pressed="true">5%</button>
+      <button class="stop-btn" data-stop="8" aria-pressed="false">8%</button>
     </div>
     <div id="decision-row">
       <button id="btn-long" class="decision">📈 Long</button>
@@ -68,14 +68,15 @@
     <div id="leaderboard">
       <h3>🏆 Leaderboard</h3>
       <div id="lb-submit-row">
-        <input id="lb-name" type="text" maxlength="20" placeholder="Ditt namn">
+        <label class="sr-only" for="lb-name">Ditt namn på leaderboarden</label>
+        <input id="lb-name" type="text" maxlength="20" autocomplete="nickname" placeholder="Ditt namn">
         <button id="btn-submit-score">Skicka in poäng</button>
       </div>
       <div id="lb-feedback"></div>
-      <div id="lb-tabs">
-        <button class="lb-tab selected" data-tab="today">Idag</button>
-        <button class="lb-tab" data-tab="total">30 dagar</button>
-        <button class="lb-tab" data-tab="average">Snitt</button>
+      <div id="lb-tabs" role="tablist" aria-label="Leaderboardperiod">
+        <button class="lb-tab selected" role="tab" aria-selected="true" data-tab="today">Idag</button>
+        <button class="lb-tab" role="tab" aria-selected="false" data-tab="total">30 dagar</button>
+        <button class="lb-tab" role="tab" aria-selected="false" data-tab="average">Snitt</button>
       </div>
       <div id="lb-list"></div>
     </div>
@@ -101,9 +102,9 @@
   </div>
 
   <!-- ?v= bumpas vid varje deploy så att ingen kör vidare på cachad kod -->
-  <script src="config.js?v=7"></script>
-  <script src="game.js?v=7"></script>
-  <script src="app.js?v=7"></script>
-  <script src="pwa.js?v=1"></script>
+  <script src="config.js?v=8"></script>
+  <script src="game.js?v=8"></script>
+  <script src="app.js?v=8"></script>
+  <script src="pwa.js?v=8"></script>
 </body>
 </html>

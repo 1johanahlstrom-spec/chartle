@@ -32,6 +32,8 @@ Caddyfile            Serverkonfiguration
 
 ## Tester
 
+Krav för utveckling: Python 3.13+, Node.js 22+ och Docker Compose v2.
+
 ```bash
 ./tests/run.sh
 ```
@@ -44,9 +46,12 @@ Browsertestet ingår inte i `run.sh` (det drar ner en egen Chromium):
 
 ```bash
 docker compose up -d
-npm install puppeteer
-node tests/test_e2e.js
+npm ci
+npm run test:e2e
 ```
+
+Enhets- och kontraktstester samt Chromium-testet körs automatiskt i separata
+GitHub Actions-jobb. `package-lock.json` låser browsertestets beroenden.
 
 ## Köra lokalt
 
@@ -83,7 +88,10 @@ cd pipeline
 ```
 
 Deterministiskt: samma rådata ger alltid samma 1825 pussel (seed 42).
-Fördelning: 750 long / 450 short / 625 avstå (neutral) = 5 pussel/dag i 365 dagar.
+Generatorns mål är 750 long / 450 short / 625 avstå. Det publicerade setet är
+751 long / 449 short / 625 neutral efter att pussel 1480 korrigerades från ett
+felaktigt short-facit till long. Nästa generation förbjuder dessutom överlapp
+mellan 70-dagarsfönster från samma ticker.
 
 ## Hur det funkar
 
@@ -190,6 +198,11 @@ git pull
 docker compose up -d --build
 ```
 
+Releasekontroll: kör `./tests/run.sh`, kontrollera `docker compose config`, ta
+en databasbackup, bumpa `?v=` och service-worker-cachen vid frontendändringar,
+deploya och verifiera `/api/health`. Containerbilder och GitHub Actions är låsta
+till digest/SHA; Dependabot föreslår månatliga uppdateringar.
+
 ### Backup av databasen
 
 Volymen `chartle_data` är den enda kopian av allas resultat. Pusslen är
@@ -205,12 +218,29 @@ huvudfilen kan sakna de senaste dagarnas resultat. Det verifierar att kopian
 går att läsa, roterar bort allt äldre än 14 backuper till `~/chartle-backup/`,
 och rör kvittofilen `.senast-lyckad` sist — dess tidsstämpel är därför ett
 ärligt svar på "när lyckades backupen senast?".
+Varje backup kör även `PRAGMA integrity_check` innan den godkänns.
 
 Installerad i crontab:
 
 ```cron
 0 2 * * * /home/betong/chartle/scripts/backup-chartle.sh >> /home/betong/backup-chartle.log 2>&1
 ```
+
+Övervaka att `~/chartle-backup/.senast-lyckad` är yngre än 26 timmar, att
+diskutrymmet räcker och att `/api/health` svarar 200. Healthchecken provar
+SQLite, inte bara HTTP-processen.
+
+### Återställ en backup
+
+Torrkörning verifierar filen utan att ändra databasen:
+
+```bash
+./scripts/restore-chartle.sh ~/chartle-backup/chartle-ÅÅÅÅ-MM-DD-HHMMSS.db
+```
+
+Lägg till `--apply` för att stoppa API:t, ersätta databasen utan kvarvarande
+WAL-filer och starta tjänsten igen. Ta alltid en ny backup först. Prova denna
+restorekedja regelbundet på en separat testinstallation.
 
 ### Ingen cron för datan
 
@@ -226,5 +256,14 @@ men leaderboarden kräver Docker-miljön eller ett separat startat API.
 
 ## Senare
 
+Bygg och kvalitetssäkra ett nytt, icke överlappande pusselset före 2027-07-05,
+publicera det som en ny versionsserie utan att numrera om redan spelade pussel.
 Konton, handplockade EP/HTF/PS-setups från trade-databasen,
 Play Store via TWA (samma kedja som Ritmova).
+
+## Data och integritet
+
+Historiska marknadsdata hämtas från Yahoo Finance via yfinance; kontrollera
+deras aktuella villkor innan datasetet distribueras i ett nytt sammanhang.
+Leaderboarden lagrar anonymt UUID, valfritt visningsnamn, poäng och tidpunkt.
+IP-adressen används i minnet för rate limiting men sparas inte i SQLite.

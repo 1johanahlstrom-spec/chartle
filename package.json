@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "test:e2e": "node tests/test_e2e.js"
+  },
+  "devDependencies": {
+    "puppeteer": "25.4.0"
+  }
+}

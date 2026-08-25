@@ -27,7 +27,7 @@ MAL="${MAL:-$HOME/chartle-backup}"
 BEHALL="${BEHALL:-14}"     # antal backuper att spara
 
 mkdir -p "$MAL"
-FIL="$MAL/chartle-$(date +%F-%H%M).db"
+FIL="$MAL/chartle-$(date +%F-%H%M%S).db"
 KOPIERAD=0
 
 cleanup() {
@@ -63,11 +63,17 @@ ANTAL=$(python3 -c "
 import sqlite3
 from contextlib import closing
 with closing(sqlite3.connect('file:$FIL?mode=ro', uri=True)) as db:
+    result = db.execute('PRAGMA integrity_check').fetchone()[0]
+    if result != 'ok':
+        raise SystemExit(f'integrity_check misslyckades: {result}')
     print(db.execute('SELECT count(*) FROM scores').fetchone()[0])")
 KOPIERAD=1
 
 # 4. Rotera: behåll de senaste, radera äldre.
-ls -1t "$MAL"/chartle-*.db | tail -n "+$((BEHALL + 1))" | xargs -r rm --
+mapfile -d '' BACKUPER < <(find "$MAL" -maxdepth 1 -type f -name 'chartle-*.db' -printf '%T@ %p\0' | sort -zrn)
+for post in "${BACKUPER[@]:BEHALL}"; do
+  rm -f -- "${post#* }"
+done
 
 # 5. Rör kvittofilen – SIST, så att den bara uppdateras när hela kedjan
 #    gick igenom (ögonblicksbild, uthämtning, verifiering, rotation).

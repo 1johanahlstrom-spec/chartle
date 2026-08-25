@@ -151,6 +151,14 @@ test("avstå ger alltid 0R", () => {
   assert.deepStrictEqual(game.computeR(p, "pass", 5), { r: 0, stopped: false });
 });
 
+test("ogiltigt val och stop avvisas innan poäng räknas", () => {
+  const p = makePuzzle([{ o: 100, h: 101, l: 99, c: 100 }]);
+  assert.throws(() => game.computeR(p, "buy", 5), /Ogiltigt val/);
+  for (const stop of [0, -1, NaN, Infinity]) {
+    assert.throws(() => game.computeR(p, "long", stop), /Ogiltig stop-nivå/);
+  }
+});
+
 // --- 4. Statistik ------------------------------------------------------------------
 // Bygger en avslutad dag av R-värden. Val väljs efter tecknet så att
 // riktningsstatistiken går att kontrollera.
@@ -228,6 +236,17 @@ test("statistiken överlever att state.days städas bort", () => {
   assert.strictEqual(stats.days, 40);
   assert.strictEqual(stats.maxStreak, 40);
   assert.strictEqual(game.statsSummary(stats).avgR, 5);
+});
+
+test("korrupt men giltig JSON-state återställs utan uppstartskrasch", () => {
+  for (const raw of [null, "text", [], 42]) {
+    assert.deepStrictEqual(game.sanitizeStoredState(raw), {});
+  }
+  const cleaned = game.sanitizeStoredState({ days: [], totalR: "x", streak: -2, stats: {} });
+  assert.deepStrictEqual(cleaned.days, {});
+  assert.strictEqual(cleaned.totalR, 0);
+  assert.strictEqual(cleaned.streak, 0);
+  assert.strictEqual(cleaned.stats, undefined);
 });
 
 // --- 5. MA läcker inte framtiden --------------------------------------------------

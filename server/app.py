@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 DB_PATH = Path(os.environ.get("CHARTLE_DB_PATH", "/data/chartle.db"))
 MAX_BODY_BYTES = 8_192
 MAX_LEADERBOARD_ROWS = 100
+SOCKET_TIMEOUT = 15.0
 
 # Måste stämma med EPOCH_DAYS och tidszonen i docs/game.js.
 EPOCH_DATE = datetime.date(2026, 7, 5)
@@ -123,6 +124,18 @@ def init_db(db_path: Path = DB_PATH) -> None:
         db.execute(
             "CREATE INDEX IF NOT EXISTS scores_day_r_idx ON scores(day, day_r DESC)"
         )
+
+
+def database_healthy(db_path: Path = DB_PATH) -> bool:
+    """Kontrollera att databasen faktiskt går att läsa och skriva."""
+    try:
+        with database(db_path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("SELECT 1 FROM scores LIMIT 1").fetchone()
+            db.execute("ROLLBACK")
+        return True
+    except (OSError, sqlite3.Error):
+        return False
 
 
 @contextmanager
@@ -298,6 +311,10 @@ post_limiter = RateLimiter()
 class ChartleHandler(BaseHTTPRequestHandler):
     server_version = "ChartleAPI/1.0"
 
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(SOCKET_TIMEOUT)
+
     def client_ip(self) -> str:
         # Bakom Caddy är client_address alltid proxyns IP — se Caddyfile.
         return self.headers.get("X-Real-IP") or self.client_address[0]
@@ -317,7 +334,8 @@ class ChartleHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         try:
             if parsed.path == "/api/health":
-                self.send_json(200, {"status": "ok"})
+                healthy = database_healthy()
+                self.send_json(200 if healthy else 503, {"status": "ok" if healthy else "unhealthy"})
                 return
             if parsed.path == "/api/leaderboard/today":
                 day = positive_int(query, "day")
@@ -381,6 +399,7 @@ def row_limit(query: dict[str, list[str]]) -> int:
 def main() -> None:
     init_db()
     server = ThreadingHTTPServer(("0.0.0.0", 8080), ChartleHandler)
+    server.daemon_threads = True
     print("Chartle API lyssnar på port 8080", flush=True)
     try:
         server.serve_forever()

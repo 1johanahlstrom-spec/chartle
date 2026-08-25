@@ -43,6 +43,22 @@ class CrossLanguageContractTest(unittest.TestCase):
         self.assertIn('rel="manifest" href="manifest.webmanifest"', html)
         self.assertTrue((docs / "service-worker.js").is_file())
 
+    def test_next_generation_disallows_overlapping_windows(self):
+        source = (ROOT / "pipeline" / "build_puzzles.py").read_text(encoding="utf-8")
+        self.assertRegex(source, r"MIN_GAP\s*=\s*WINDOW")
+
+    def test_service_worker_prefetches_daily_puzzles(self):
+        worker = (ROOT / "docs" / "service-worker.js").read_text(encoding="utf-8")
+        client = (ROOT / "docs" / "pwa.js").read_text(encoding="utf-8")
+        self.assertIn("CACHE_PUZZLES", worker)
+        self.assertIn("CACHE_PUZZLES", client)
+
+    def test_accessibility_state_is_present(self):
+        html = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('aria-pressed="true"', html)
+        self.assertIn('role="tablist"', html)
+        self.assertIn('for="lb-name"', html)
+
 
 if __name__ == "__main__":
     unittest.main()
