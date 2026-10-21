@@ -1,35 +1,68 @@
-"""Steg 2-4: Bygg 365 pussel från rawdata.pkl och skriv dem som JSON till web/puzzles/.
+"""Steg 2-4: Bygg 1825 pussel från rådatapaketet och skriv JSON till docs/puzzles/.
 
 Varje pussel = 70 handelsdagar: 60 synliga candles + 10 dagars utfall.
 Priser normaliseras så att sista synliga close (entry) = 100.
 Volym normaliseras så att högsta synliga volym = 100.
 Facit (ticker, datum, kategori) base64-kodas i "meta" — lätt obfuskering, som Wordle.
 
-Deterministiskt: samma indata ger alltid samma 365 pussel (seed 42).
+Deterministiskt: samma indata ger alltid samma 1825 pussel (seed 42). Notera att
+"samma indata" betyder samma rawdatapaket — ny rådata ger en ny ordning. Skriptet
+vägrar därför skriva över ett befintligt pusselset utan CHARTLE_ALLOW_REBUILD=1.
 """
 
 import base64
 import json
+import os
 import random
+import shutil
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+HERE = Path(__file__).resolve().parent      # skriptet ska gå att köra var ifrån som helst
+ROOT = HERE.parent
 
 VISIBLE = 60          # candles spelaren ser
 OUTCOME = 10          # dagar som spelas fram
 WINDOW = VISIBLE + OUTCOME
 STRIDE = 10           # testa nytt kandidatfönster var 10:e dag
-MIN_GAP = 25          # min avstånd mellan valda fönster i samma ticker
+MIN_GAP = WINDOW      # inget överlapp mellan valda fönster i samma ticker
 MAX_PER_TICKER = 45
 MAX_FLAT = 0.25       # max andel platta candles (high==low) i synligt fönster
 MIN_LEVELS = 25       # min distinkta prisnivåer i synligt fönster (likviditet)
+MAX_GAP_DAYS = 10     # max kalenderdagar mellan två handelsdagar (helger + helgdag)
 # Tak per (label, år): hindrar att ett enda kraschår (1973, 1987, 2000, 2020)
 # äter hela budgeten så att urvalet sprids över alla decennier 1962-2024.
 MAX_PER_YEAR = {"long": 40, "short": 30, "neutral": 40}
 TARGETS = {"long": 750, "short": 450, "neutral": 625}  # 1825 = 5 pussel/dag i 365 dagar
 
-data = pd.read_pickle("rawdata.pkl")
-categories = pd.read_pickle("categories.pkl")
+outdir = ROOT / "docs" / "puzzles"
+
+# Att bygga om numrerar om ALLA pussel: shuffle(seed=42) är bara deterministisk
+# givet exakt samma kandidatlista, och den beror på rådatapaketet. Ny rådata ger
+# ny ordning → spelare får om-numrerade och upprepade pussel, och epoken i
+# docs/game.js pekar fel. Därför krävs ett uttryckligt medgivande.
+existing = sorted(outdir.glob("*.json")) if outdir.exists() else []
+if existing and os.environ.get("CHARTLE_ALLOW_REBUILD") != "1":
+    sys.exit(
+        f"AVBRYTER: {len(existing)} pussel finns redan i {outdir}.\n"
+        "En ombyggnad numrerar om alla pussel och bryter epoken för spelare\n"
+        "som redan börjat. Tagga nuvarande set först (git tag puzzles-v1),\n"
+        "bumpa PUZZLE_VERSION i docs/game.js och kör sedan om med\n"
+        "CHARTLE_ALLOW_REBUILD=1 om du verkligen menar det."
+    )
+
+bundle_path = HERE / "rawdata-bundle.pkl"
+if bundle_path.exists():
+    bundle = pd.read_pickle(bundle_path)
+    if not isinstance(bundle, dict) or bundle.get("version") != 1:
+        sys.exit(f"AVBRYTER: okänt format i {bundle_path}")
+    data, categories = bundle["data"], bundle["categories"]
+else:
+    # Bakåtkompatibilitet för det befintliga lokala datasetet.
+    data = pd.read_pickle(HERE / "rawdata.pkl")
+    categories = pd.read_pickle(HERE / "categories.pkl")
 ticker_cat = {t: cat for cat, ts in categories.items() for t in ts}
 tickers = sorted(ticker_cat)
 
@@ -40,7 +73,7 @@ for ticker in tickers:
     dates = df.index
     o, h, l, c, v = (df[col].to_numpy() for col in ["Open", "High", "Low", "Close", "Volume"])
 
-    for i in range(0, len(df) - WINDOW, STRIDE):
+    for i in range(0, len(df) - WINDOW + 1, STRIDE):
         vis_h, vis_l = h[i:i + VISIBLE], l[i:i + VISIBLE]
         entry = c[i + VISIBLE - 1]
         final = c[i + WINDOW - 1]
@@ -54,9 +87,14 @@ for ticker in tickers:
         if (min(l[i:i + WINDOW]) <= 0 or v[i:i + VISIBLE].max() == 0
                 or flat_frac > MAX_FLAT or levels < MIN_LEVELS):
             continue
-        # Kräv sammanhängande handel: inga stora datumhål (halter/dålig data)
+        # Kräv sammanhängande handel: inga stora datumhål (halter/dålig data).
+        # Både total spännvidd och största enskilda glapp kollas — annars
+        # passerar ett fönster med tre veckors handelsstopp mitt i.
         span = (dates[i + WINDOW - 1] - dates[i]).days
         if span > WINDOW * 2.2:
+            continue
+        gaps = dates[i + 1:i + WINDOW] - dates[i:i + WINDOW - 1]
+        if gaps.max().days > MAX_GAP_DAYS:
             continue
 
         fwd_ret = final / entry - 1
@@ -119,15 +157,23 @@ for lbl, target in TARGETS.items():
         count += 1
     print(f"Valda {lbl}: {count}/{target}")
 
-assert len(chosen) == sum(TARGETS.values()), f"Bara {len(chosen)} pussel!"
+if len(chosen) != sum(TARGETS.values()):
+    # En assert försvinner med python -O och ger ingen vägledning. Ett kort set
+    # ska stoppa bygget innan staging-katalogen rör det publicerade setet.
+    sys.exit(
+        f"AVBRYTER: bara {len(chosen)} av {sum(TARGETS.values())} pussel kunde "
+        "väljas. Rådatan är för tunn eller filtren för hårda — inget skrevs."
+    )
 
 # Deterministisk blandning så att svarstyperna inte klumpar sig i kalendern
 random.Random(42).shuffle(chosen)
 
-outdir = Path("../docs/puzzles")
-outdir.mkdir(parents=True, exist_ok=True)
-for f in outdir.glob("*.json"):
-    f.unlink()
+# Skriv till en staging-katalog och byt in den först när ALLT lyckats. Att
+# radera docs/puzzles/ innan skrivningen skulle lämna en halvtom katalog som
+# Caddy serverar direkt om loopen kraschar.
+staging = outdir.parent / "puzzles.new"
+shutil.rmtree(staging, ignore_errors=True)
+staging.mkdir(parents=True)
 
 for idx, cand in enumerate(chosen):
     ticker, i = cand["ticker"], cand["i"]
@@ -157,7 +203,21 @@ for idx, cand in enumerate(chosen):
         "v": [round(float(x) / vmax * 100, 2) for x in w["Volume"]],
         "meta": base64.b64encode(json.dumps(meta).encode()).decode(),
     }
-    (outdir / f"{idx}.json").write_text(json.dumps(puzzle, separators=(",", ":")))
+    (staging / f"{idx}.json").write_text(json.dumps(puzzle, separators=(",", ":")))
+
+# Behåll det gamla settet tills det nya är färdigskrivet och återställ det om
+# namnbytet misslyckas. Då finns alltid minst ett komplett set kvar på disk.
+old = outdir.parent / "puzzles.old"
+shutil.rmtree(old, ignore_errors=True)
+if outdir.exists():
+    outdir.rename(old)
+try:
+    staging.rename(outdir)
+except Exception:
+    if old.exists() and not outdir.exists():
+        old.rename(outdir)
+    raise
+shutil.rmtree(old, ignore_errors=True)
 
 sizes = sum(f.stat().st_size for f in outdir.glob("*.json"))
-print(f"\nSkrev {len(chosen)} pussel till {outdir.resolve()} ({sizes // 1024} KB totalt)")
+print(f"\nSkrev {len(chosen)} pussel till {outdir} ({sizes // 1024} KB totalt)")

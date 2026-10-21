@@ -6,33 +6,70 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
 ## Arkitektur i korthet
 
 - `pipeline/` — Python-skript som körs EN gång lokalt för att generera pussel.
-  Kräver `rawdata.pkl` (skapas av `fetch_data.py`, gitignorerad). Determinism:
+  Kräver `rawdata-bundle.pkl` (skapas av `fetch_data.py`, gitignorerad;
+  äldre `rawdata.pkl` + `categories.pkl` stöds). Determinism:
   seed 42, samma rådata → samma 1825 pussel.
-- `docs/` — webbklienten (vanilla JS + Plotly via CDN, ingen byggkedja).
+- `docs/` — webbklienten (vanilla JS + självhostad Plotly, ingen byggkedja).
 - `server/` — leaderboard-API med Pythons standardbibliotek och SQLite.
 - `compose.yaml` + `Caddyfile` — egenhostad drift på localhost:8137; Tailscale
   Funnel publicerar porten med HTTPS på Funnel-port 10000.
 - Epoch: 2026-07-05 = Chartle #1. Runda r på dag d laddar
-  `puzzles/{(d*5 + r) % 1825}.json`. Ändra ALDRIG epoch eller pusselordningen
-  efter lansering — då får spelare om-numrerade/upprepade pussel.
+  `puzzles/{(d*5 + r) % 1825}.json?v=PUZZLE_VERSION`. Ändra ALDRIG epoch eller
+  pusselordningen efter lansering — då får spelare om-numrerade/upprepade
+  pussel. `build_puzzles.py` vägrar därför skriva över ett befintligt set utan
+  `CHARTLE_ALLOW_REBUILD=1`, och skriver via staging-katalog.
+- **PUZZLE_VERSION** i `docs/game.js` ingår i varje pussel-URL eftersom Caddy
+  cachar `/puzzles/*` som `immutable` och service workern cache-first. Bumpa
+  den vid varje ändring av en publicerad pusselfil, annars fortsätter
+  installerade klienter spela den gamla filen. `repair_splits.py --apply`
+  kräver `CHARTLE_ALLOW_INPLACE_REPAIR=1` och påminner om bumpen.
+- **Frontendversionen** (`?v=` i `index.html`, `APP_SHELL` och `CACHE` i
+  `service-worker.js`) måste vara samma nummer. `tests/test_contract.py`
+  vaktar det. Service workern är network-first för HTML/JS/CSS och
+  cache-first bara för pussel och vendor — annars fastnar en installerad app
+  på förra deployens kod.
+- **Dygnsgränsen är Europe/Stockholm**, inte klientens lokala tid. Både
+  `docs/game.js` (`stockholmDayIndex`) och `server/app.py`
+  (`current_puzzle_no`) räknar så — ändras den ena måste den andra följa med.
+- `docs/game.js` innehåller all ren spellogik och testas av
+  `tests/test_game.js`. Lägg ny logik där, inte i `app.js` (som är DOM-bunden
+  och otestbar utan browser).
 
 ## Regler och fällor
 
 - **Deploy**: egen Ubuntu-server via `compose.yaml`. Caddy serverar `docs/` och
   proxar `/api/*` på `127.0.0.1:8137`; Tailscale Funnel sköter publik HTTPS.
 - **Priser i pussel-JSON är normaliserade**: sista synliga close = 100.
-  All poänglogik (R-multiplar, stops) i `app.js` bygger på det.
-- **MA10/MA20 räknas klientsidan** i `app.js` (`sma()`), inte i pusseldatan.
+  All poänglogik (R-multiplar, stops) i `game.js` bygger på det.
+- **MA10/MA20 räknas klientsidan** i `game.js` (`sma()`), inte i pusseldatan.
   Måste beräknas på `puzzle.c.slice(0, n)` — aldrig hela serien — annars läcker
   medelvärdet framtida candles under de 10 utspelningsdagarna. Första
   (period-1) punkterna är `null` så Plotly inte ritar en ofullständig linje.
 - **Facit är base64-kodat** i `meta`-fältet — medveten lätt obfuskering,
   ingen säkerhet.
-- **localStorage-schema** versioneras med `state.v` (nu 2). Bumpa versionen
+- **Två separata tak på poängen.** `MAX_R` i `docs/game.js` kapar varje runda
+  vid ±10R — R har annars ingen gräns åt något håll, eftersom nämnaren är
+  stoppavståndet (2 %-stopp på pussel 1246 ger okappat +224,5R, ett gap ned
+  ger -31,2R). Capen måste vara symmetrisk. `MAX_DAY_R` i `server/app.py`
+  ligger kvar på 300 trots att en capad klient max kan skicka 50R: en spelare
+  med cachad app.js från före capen kan fortfarande räkna fram 251R, och att
+  avvisa den med 400 vore att straffa någon för vår deploy. Ändras `MAX_DAY_R`
+  byggs `scores` om vid start; SQLite kan inte ALTER:a en CHECK-constraint.
+- **localStorage-schema** versioneras med `state.v` (nu 3). Bumpa versionen
   och skriv migrering i `loadState`-blocket om schemat ändras.
+  v3 lade till `state.stats` (aggregerad statistik) och `ticker`/`year` per
+  runda. `state.stats` **måste** aggregeras vid varje avslutad dag — det går
+  inte att räkna om ur `state.days`, som `pruneDays` kapar till 30 dagar.
+  Migreringen från v2 körs därför före `pruneDays`.
 - **Avnoterade tickers**: yfinance tappar historik när bolag avnoteras
   (WBA → ersatt med KHC, SQ → XYZ). Kör om `fetch_data.py` med ersättare om
-  fler försvinner.
+  fler försvinner. Skriptet avbryter om <90 % av tickerna ger data, så en
+  halvtrasig nedladdning skriver inte över `rawdata-bundle.pkl`.
+- **Yahoos splithistorik saknar 60-talet.** Två MCD-fönster (pussel 1480 och
+  1482) hade en ojusterad 2:1-split i utfallsdelen — charten "kraschade" 50 %
+  under utspelningen och 1480 hade dessutom inverterat facit. Lagade med
+  `pipeline/repair_splits.py`; `tests/test_puzzles.py` vaktar mot återfall
+  genom att leta prisfall som träffar en exakt splitkvot.
 - **Dataspann 1962–2024**: yfinance har daglig OHLC från **1962-01-02** för
   klassiska blue chips — allt äldre (30/40/50-tal) finns bara i betalkällor.
   85 tickers, varav de långlivade (kategorierna `classic` + `techclassic`)
@@ -44,8 +81,8 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
   likviditetsfilter i `build_puzzles.py` (`MIN_LEVELS` distinkta prisnivåer +
   `MAX_FLAT` platta candles) som fångar både gammalt illikvitt och moderna
   penny-stocks (CELH, SPCE). `MAX_PER_YEAR` sprider urvalet över decennierna.
-- Repo-ägare: `1johanahlstrom-spec`, sajt:
-  https://1johanahlstrom-spec.github.io/chartle/
+- Repo-ägare: `1johanahlstrom-spec`. GitHub Pages-adressen är historisk;
+  produktionen körs via Caddy och Tailscale Funnel enligt README.
 
 ## Vanliga kommandon
 

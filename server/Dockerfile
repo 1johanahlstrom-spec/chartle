@@ -1,4 +1,8 @@
-FROM python:3.13-alpine
+FROM python:3.13-alpine@sha256:399babc8b49529dabfd9c922f2b5eea81d611e4512e3ed250d75bd2e7683f4b0
+
+# Alpine saknar tidszonsdata, och zoneinfo behöver den för Europe/Stockholm —
+# utan tzdata kraschar API:t direkt vid uppstart.
+RUN apk add --no-cache tzdata
 
 RUN addgroup -S chartle && adduser -S -G chartle chartle
 WORKDIR /app
