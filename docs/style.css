@@ -415,11 +415,17 @@ h1 { font-size: 1.4rem; }
 #btn-submit-score:disabled { opacity: 0.5; cursor: default; }
 
 #lb-feedback {
-  color: var(--green);
+  color: var(--muted);
   font-size: 0.85rem;
   min-height: 1.2em;
   margin-bottom: 6px;
 }
+
+#lb-feedback.success,
+#share-feedback.success { color: var(--green); }
+
+#lb-feedback.error,
+#share-feedback.error { color: var(--red); }
 
 #lb-tabs {
   display: flex;
@@ -490,7 +496,7 @@ h1 { font-size: 1.4rem; }
 }
 
 #share-feedback {
-  color: var(--green);
+  color: var(--muted);
   font-size: 0.85rem;
   min-height: 1.2em;
   margin-top: 8px;

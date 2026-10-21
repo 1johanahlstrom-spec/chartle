@@ -10,6 +10,12 @@
   const DAYS_OF_CONTENT = TOTAL_PUZZLES / ROUNDS;   // 365 dagar innan pusslen börjar om
   const ENTRY = 100;                                // normaliserat: sista synliga close = 100
 
+  // Pusselsetets version. Den ingår i varje pussel-URL (?v=N) eftersom
+  // Caddy och service workern cachas hårt/evigt. Ändras en publicerad
+  // pusselfil — t.ex. av repair_splits.py — måste versionen bumpas, annars
+  // fortsätter gamla webbläsare att spela den gamla filen från cachen.
+  const PUZZLE_VERSION = 1;
+
   // Tak per runda. R har annars ingen gräns åt något håll — nämnaren är
   // stoppavståndet, så ett 2 %-stopp på GME-squeezen 2021-02-23 ger +224.5R
   // och ett gap ned genom stoppen kan ge -31.2R. En enda sådan runda var värd
@@ -43,6 +49,13 @@
   function puzzleFileIndex(raw) {
     if (!Number.isFinite(raw)) return 0;
     return ((Math.trunc(raw) % TOTAL_PUZZLES) + TOTAL_PUZZLES) % TOTAL_PUZZLES;
+  }
+
+  // Enda stället som bygger en pussel-URL. app.js hämtar rundor härifrån och
+  // pwa.js förhämtar dagens fem — annars kunde de två glida isär och ladda
+  // olika versioner av samma pussel.
+  function puzzleUrl(raw) {
+    return `puzzles/${puzzleFileIndex(raw)}.json?v=${PUZZLE_VERSION}`;
   }
 
   // Validera hela kontraktet innan data når Plotly eller poänglogiken. Filerna
@@ -191,9 +204,23 @@
     return summary;
   }
 
+  // Streaken ska nollställas så snart en hel dag missats, inte först när
+  // nästa dag spelas klart. Annars visar headern "🔥 12" hela den missade
+  // dagen och ända fram till nästa avslutade runda.
+  function visibleStreak(streak, lastPlayedDay, todayIndex) {
+    const current = Number.isInteger(streak) && streak > 0 ? streak : 0;
+    // Äldre state (före lastPlayedDay) har ingen dag att jämföra med — behåll
+    // streaken i stället för att nollställa den vid uppgraderingen.
+    if (!Number.isInteger(lastPlayedDay)) return current;
+    if (lastPlayedDay < todayIndex - 1) return 0;
+    return current;
+  }
+
   function isObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
+
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
   // localStorage är extern indata. En avbruten äldre migrering, ett tillägg eller
   // manuell redigering ska inte kunna göra hela appen oanvändbar vid uppstart.
@@ -202,18 +229,33 @@
     const state = { ...raw };
     if (!isObject(state.days)) state.days = {};
     else {
-      state.days = Object.fromEntries(Object.entries(state.days).filter(([, day]) =>
-        isObject(day) && Array.isArray(day.rounds) && day.rounds.every((round) =>
+      state.days = Object.fromEntries(Object.entries(state.days).filter(([key, day]) =>
+        /^[1-9]\d*$/.test(key) && isObject(day) && Array.isArray(day.rounds) &&
+        day.rounds.every((round) =>
           isObject(round) && ["long", "short", "pass"].includes(round.choice) &&
           Number.isFinite(round.r))));
     }
     if (!Number.isFinite(state.totalR)) state.totalR = 0;
     if (!Number.isInteger(state.streak) || state.streak < 0) state.streak = 0;
+    if (state.lastPlayedDay !== undefined &&
+        (!Number.isInteger(state.lastPlayedDay) || state.lastPlayedDay < 0))
+      delete state.lastPlayedDay;
+    if (state.playerId !== undefined &&
+        !(typeof state.playerId === "string" && UUID.test(state.playerId)))
+      delete state.playerId;
+    else if (state.playerId !== undefined)
+      state.playerId = state.playerId.toLowerCase();   // servern jämför gemener
+    if (state.playerName !== undefined &&
+        !(typeof state.playerName === "string" && state.playerName.trim().length <= 20 &&
+          state.playerName.trim().length > 0))
+      delete state.playerName;
+
     const validChoice = (choice) => isObject(choice) &&
       [choice.n, choice.wins, choice.sumR].every(Number.isFinite);
     const validStats = isObject(state.stats) && isObject(state.stats.choices) &&
       [state.stats.days, state.stats.positiveDays, state.stats.sumR, state.stats.maxStreak]
         .every(Number.isFinite) &&
+      (state.stats.bestDay === null || Number.isFinite(state.stats.bestDay)) &&
       ["long", "short", "pass"].every((name) => validChoice(state.stats.choices[name]));
     if (state.stats !== undefined && !validStats) delete state.stats;
     return state;
@@ -221,8 +263,10 @@
 
   const api = {
     EPOCH_DAYS, ROUNDS, TOTAL_PUZZLES, DAYS_OF_CONTENT, ENTRY, MAX_R,
-    stockholmDayIndex, puzzleFileIndex, validatePuzzle, sma, computeR,
-    emptyStats, recordDay, statsFromDays, statsSummary, sanitizeStoredState,
+    PUZZLE_VERSION,
+    stockholmDayIndex, puzzleFileIndex, puzzleUrl, validatePuzzle, sma, computeR,
+    emptyStats, recordDay, statsFromDays, statsSummary, visibleStreak,
+    sanitizeStoredState,
   };
 
   if (typeof module === "object" && module.exports) module.exports = api;

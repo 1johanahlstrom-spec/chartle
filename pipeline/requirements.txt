@@ -1,2 +1,6 @@
-yfinance
-pandas
+# Låsta för reproducerbara byggen: samma skript ska ge samma pussel, och en
+# tyst major-uppgradering av pandas/yfinance får inte ändra rådatan mitt i en
+# säsong. Uppgradera medvetet och bygg i så fall om setet bakom
+# CHARTLE_ALLOW_REBUILD=1 (se build_puzzles.py).
+pandas==3.0.6
+yfinance==1.7.0

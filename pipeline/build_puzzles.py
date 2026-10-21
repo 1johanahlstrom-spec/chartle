@@ -48,8 +48,9 @@ if existing and os.environ.get("CHARTLE_ALLOW_REBUILD") != "1":
     sys.exit(
         f"AVBRYTER: {len(existing)} pussel finns redan i {outdir}.\n"
         "En ombyggnad numrerar om alla pussel och bryter epoken för spelare\n"
-        "som redan börjat. Tagga nuvarande set först (git tag puzzles-v1) och\n"
-        "kör sedan om med CHARTLE_ALLOW_REBUILD=1 om du verkligen menar det."
+        "som redan börjat. Tagga nuvarande set först (git tag puzzles-v1),\n"
+        "bumpa PUZZLE_VERSION i docs/game.js och kör sedan om med\n"
+        "CHARTLE_ALLOW_REBUILD=1 om du verkligen menar det."
     )
 
 bundle_path = HERE / "rawdata-bundle.pkl"
@@ -156,7 +157,13 @@ for lbl, target in TARGETS.items():
         count += 1
     print(f"Valda {lbl}: {count}/{target}")
 
-assert len(chosen) == sum(TARGETS.values()), f"Bara {len(chosen)} pussel!"
+if len(chosen) != sum(TARGETS.values()):
+    # En assert försvinner med python -O och ger ingen vägledning. Ett kort set
+    # ska stoppa bygget innan staging-katalogen rör det publicerade setet.
+    sys.exit(
+        f"AVBRYTER: bara {len(chosen)} av {sum(TARGETS.values())} pussel kunde "
+        "väljas. Rådatan är för tunn eller filtren för hårda — inget skrevs."
+    )
 
 # Deterministisk blandning så att svarstyperna inte klumpar sig i kalendern
 random.Random(42).shuffle(chosen)

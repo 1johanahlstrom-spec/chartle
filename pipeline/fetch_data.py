@@ -100,7 +100,7 @@ categories_ok = {cat: [t for t in ts if t in ok] for cat, ts in CATEGORIES.items
 # Ett avbrott kan aldrig lämna byggsteget med halva den nya generationen.
 bundle = {
     "version": 1,
-    "generated_at": pd.Timestamp.utcnow().isoformat(),
+    "generated_at": pd.Timestamp.now(tz="UTC").isoformat(),
     "data": data,
     "categories": categories_ok,
 }

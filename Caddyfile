@@ -1,11 +1,22 @@
+# Tailscale Funnel ansluter från 127.0.0.1 och skickar klientens adress i
+# X-Forwarded-For. trusted_proxies låter {client_ip} plocka fram den riktiga
+# klienten i stället för Funnels/Dockerns adress — annars hamnar alla spelare
+# i samma rate-limit-hink. 100.64.0.0/10 täcker Tailscales CGNAT-adresser.
+{
+	servers {
+		trusted_proxies static private_ranges 100.64.0.0/10
+	}
+}
+
 :80 {
 	encode zstd gzip
 
 	handle /api/* {
 		reverse_proxy api:8080 {
 			# Utan detta ser API:t bara Caddys container-IP, och rate
-			# limitingen skulle råka gälla alla spelare gemensamt.
-			header_up X-Real-IP {remote_host}
+			# limitingen skulle råka gälla alla spelare gemensamt. {client_ip}
+			# respekterar trusted_proxies ovan och följer X-Forwarded-For.
+			header_up X-Real-IP {client_ip}
 		}
 	}
 
@@ -14,8 +25,9 @@
 		file_server
 	}
 
-	# Pusselfilerna ändras aldrig efter lansering (se pipeline/build_puzzles.py)
-	# och kan därför cachas hårt — det gör spelet märkbart snabbare.
+	# Pusselfilerna är oföränderliga under sin versions-URL (se
+	# PUZZLE_VERSION i docs/game.js och repair_splits.py) och kan därför
+	# cachas hårt — det gör spelet märkbart snabbare.
 	@puzzles path /puzzles/*
 	header @puzzles Cache-Control "public, max-age=31536000, immutable"
 
@@ -24,8 +36,12 @@
 	header @vendor Cache-Control "public, max-age=31536000, immutable"
 
 	# Egen kod revalideras alltid, så en deploy slår igenom direkt även om
-	# någon missar att bumpa ?v= i index.html.
-	@code path *.js *.css /
+	# någon missar att bumpa ?v= i index.html. Undantaget är vendor/ ovan:
+	# annars skriver den senare regeln över den hårda cachen för Plotly.
+	@code {
+		not path /vendor/*
+		path *.js *.css /
+	}
 	header @code Cache-Control "no-cache"
 
 	# Manifestet ska, liksom service workern ovan, upptäcka nya deployer snabbt.

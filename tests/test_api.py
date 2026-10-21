@@ -20,6 +20,8 @@ from server.app import (
     current_puzzle_no,
     init_db,
     insert_score,
+    requested_player_id,
+    resolve_client_ip,
     today_leaderboard,
     total_leaderboard,
     window_leaderboard,
@@ -157,6 +159,28 @@ class LeaderboardTest(unittest.TestCase):
         rows = today_leaderboard(today, 25, self.db_path)
         self.assertEqual(rows[0]["day_r"], 251.4)
 
+    def test_player_ids_are_never_public(self):
+        """UUID:t är spelarens hemliga nyckel — listan får bara visa "me"."""
+        self.score(self.recent(0), self.alice, "Alice", 1.5)
+        self.score(self.recent(0), self.bob, "Bob", 2.5)
+        rows = today_leaderboard(self.recent(0), 25, self.db_path, me_id=self.alice)
+        self.assertTrue(all("player_id" not in row for row in rows))
+        by_name = {row["name"]: row for row in rows}
+        self.assertTrue(by_name["Alice"]["me"])
+        self.assertFalse(by_name["Bob"]["me"])
+
+    def test_window_lists_also_hide_player_ids(self):
+        for offset in range(4):
+            self.score(self.recent(offset), self.alice, "Alice", 1)
+            self.score(self.recent(offset), self.bob, "Bob", 2)
+        for rows in (
+            total_leaderboard(25, self.db_path, me_id=self.alice),
+            average_leaderboard(25, self.db_path, me_id=self.alice),
+        ):
+            self.assertTrue(rows)
+            self.assertTrue(all("player_id" not in row for row in rows))
+            self.assertTrue(all(row["me"] is (row["name"] == "Alice") for row in rows))
+
     def test_check_constraint_matches_the_python_limit(self):
         """SQL-taket och MAX_DAY_R måste följas åt, annars nekar databasen tyst."""
         with closing(sqlite3.connect(self.db_path)) as db:
@@ -236,6 +260,28 @@ class RateLimiterTest(unittest.TestCase):
         limiter = RateLimiter(limit=1, window=0.0)   # allt är omedelbart gammalt
         self.assertTrue(limiter.check("1.2.3.4"))
         self.assertTrue(limiter.check("1.2.3.4"))
+
+
+class ClientIpTest(unittest.TestCase):
+    def test_uses_a_valid_forwarded_address(self):
+        # Caddy sätter X-Real-IP från {client_ip}; den måste gå före peer-IP:n
+        # annars delar alla spelare på en enda rate-limit-kvot.
+        self.assertEqual(resolve_client_ip("203.0.113.7", "172.18.0.5"), "203.0.113.7")
+
+    def test_invalid_forwarded_address_falls_back_to_peer(self):
+        for bad in ("", "inte-en-ip", "1.2.3.4, 5.6.7.8", "999.999.999.999"):
+            with self.subTest(value=bad):
+                self.assertEqual(resolve_client_ip(bad, "172.18.0.5"), "172.18.0.5")
+
+    def test_ipv6_is_normalised(self):
+        self.assertEqual(resolve_client_ip("2001:0db8::1", "172.18.0.5"), "2001:db8::1")
+
+    def test_optional_player_header_is_validated(self):
+        player = str(uuid.uuid4())
+        self.assertEqual(requested_player_id({"X-Player-Id": player}), player)
+        self.assertEqual(requested_player_id({"X-Player-Id": f" {player.upper()} "}), player)
+        self.assertIsNone(requested_player_id({"X-Player-Id": "inte-ett-uuid"}))
+        self.assertIsNone(requested_player_id({}))
 
 
 class HealthTest(unittest.TestCase):

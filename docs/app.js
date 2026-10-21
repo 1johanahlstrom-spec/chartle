@@ -5,8 +5,9 @@
 // testas av tests/test_game.js.
 const {
   ROUNDS, DAYS_OF_CONTENT, ENTRY,
-  stockholmDayIndex, puzzleFileIndex, validatePuzzle, sma, computeR,
-  emptyStats, recordDay, statsFromDays, statsSummary, sanitizeStoredState,
+  stockholmDayIndex, puzzleFileIndex, puzzleUrl, validatePuzzle, sma, computeR,
+  emptyStats, recordDay, statsFromDays, statsSummary, visibleStreak,
+  sanitizeStoredState,
 } = ChartleGame;
 
 const KEEP_DAYS = 30;                     // så många spelade dagar sparas i localStorage
@@ -72,6 +73,9 @@ state.stats = state.stats || emptyStats();
 state.days = pruneDays(state.days || {});
 state.totalR = state.totalR || 0;
 if (!state.playerId) state.playerId = newPlayerId();
+// En missad dag ska synas i headern direkt, inte först när nästa dag spelats
+// klart. visibleStreak rör inte state.stats.maxStreak — historiken består.
+state.streak = visibleStreak(state.streak, state.lastPlayedDay, dayIndex);
 
 // Skriv tillbaka direkt. Utan detta lever migreringen, städningen och ett
 // nygenererat playerId bara i minnet tills spelaren råkar avsluta en runda —
@@ -347,7 +351,7 @@ function showLoadError() {
 // aldrig bli ett obehandlat promise-fel — då står spelaren med en vit ruta.
 async function loadRound(round, showControls = true) {
   try {
-    const resp = await fetch(`puzzles/${fileIndexFor(round)}.json`);
+    const resp = await fetch(puzzleUrl(fileIndexFor(round)));
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const loaded = validatePuzzle(await resp.json());
     const parsed = JSON.parse(atob(loaded.meta));
@@ -557,7 +561,7 @@ $("btn-share").addEventListener("click", async () => {
     if (navigator.share) await navigator.share({ text: txt });
     else {
       await navigator.clipboard.writeText(txt);
-      $("share-feedback").textContent = "Kopierat till urklipp!";
+      setFeedback("share-feedback", "Kopierat till urklipp!", "success");
     }
   } catch { /* användaren avbröt */ }
 });
@@ -573,19 +577,34 @@ async function lbRequest(path, options = {}) {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      // Servern markerar vår rad med "me" och slipper skicka ut spelarens
+      // UUID till alla som tittar på listan.
+      ...(state.playerId ? { "X-Player-Id": state.playerId } : {}),
       ...(options.headers || {}),
     },
   });
   return resp;
 }
 
+// Feedbacken var alltid grön, även för fel. Färgen ska säga samma sak som
+// texten — annars ser "Kunde inte skicka in" ut som en bekräftelse.
+function setFeedback(id, text, kind = "") {
+  const el = $(id);
+  el.textContent = text;
+  el.classList.toggle("error", kind === "error");
+  el.classList.toggle("success", kind === "success");
+}
+
 async function submitScore() {
   const name = $("lb-name").value.trim();
-  if (!name) { $("lb-feedback").textContent = "Skriv ett namn först."; return; }
-  if (puzzleNo < 1) { $("lb-feedback").textContent = "Chartle har inte startat än."; return; }
+  if (!name) { setFeedback("lb-feedback", "Skriv ett namn först.", "error"); return; }
+  if (puzzleNo < 1) {
+    setFeedback("lb-feedback", "Chartle har inte startat än.", "error");
+    return;
+  }
 
   $("btn-submit-score").disabled = true;
-  $("lb-feedback").textContent = "Skickar…";
+  setFeedback("lb-feedback", "Skickar…");
   // Ett 400 betyder att servern avvisade själva innehållet — samma data ger
   // samma svar hur många gånger man än trycker. Att då skriva "försök igen"
   // och släppa knappen fri sätter spelaren i en loop utan utväg.
@@ -604,22 +623,26 @@ async function submitScore() {
       day().submitted = true;
       state.playerName = name;              // sparas först när det gick vägen
       saveState();
-      $("lb-feedback").textContent = "Inskickat! 🏆";
+      setFeedback("lb-feedback", "Inskickat! 🏆", "success");
       $("lb-submit-row").classList.add("hidden");
       renderLeaderboard();
       return;
     }
     if (resp.status === 429) {
-      $("lb-feedback").textContent = "För många inskick — vänta en stund.";
+      setFeedback("lb-feedback", "För många inskick — vänta en stund.", "error");
     } else if (resp.status === 400) {
       permanent = true;
-      $("lb-feedback").textContent = "Servern kunde inte ta emot resultatet. Dagens poäng finns kvar lokalt.";
+      setFeedback(
+        "lb-feedback",
+        "Servern kunde inte ta emot resultatet. Dagens poäng finns kvar lokalt.",
+        "error",
+      );
     } else {
-      $("lb-feedback").textContent = "Kunde inte skicka in — försök igen.";
+      setFeedback("lb-feedback", "Kunde inte skicka in — försök igen.", "error");
     }
   } catch (err) {
     console.error("Inskick misslyckades:", err);
-    $("lb-feedback").textContent = "Ingen kontakt med servern — försök igen.";
+    setFeedback("lb-feedback", "Ingen kontakt med servern — försök igen.", "error");
   } finally {
     // Knappen måste tillbaka vid nätverksfel, annars sitter spelaren fast.
     if (!day().submitted && !permanent) $("btn-submit-score").disabled = false;
@@ -639,8 +662,10 @@ const LB_EMPTY = {
   average: "Ingen har spelat tillräckligt många dagar ännu.",
 };
 
+let leaderboardRequest = 0;
 async function renderLeaderboard() {
   const list = $("lb-list");
+  const requestNo = ++leaderboardRequest;
   list.innerHTML = "<p class='lb-loading'>Laddar…</p>";
   const query = LB_QUERY[lbTab]();
   let rows;
@@ -649,10 +674,15 @@ async function renderLeaderboard() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     rows = await resp.json();
   } catch (err) {
+    // Ett långsamt svar från en flik användaren redan lämnat får inte skriva
+    // över den nya flikens lista — därför jämförs sekvensnumret före varje
+    // skrivning till DOM:en.
+    if (requestNo !== leaderboardRequest) return;
     console.error("Kunde inte ladda leaderboard:", err);
     list.innerHTML = "<p class='lb-loading'>Kunde inte ladda listan.</p>";
     return;
   }
+  if (requestNo !== leaderboardRequest) return;
   if (!rows.length) {
     list.innerHTML = "";
     const empty = document.createElement("p");
@@ -666,7 +696,7 @@ async function renderLeaderboard() {
   const table = document.createElement("table");
   rows.forEach((row, i) => {
     const tr = document.createElement("tr");
-    if (row.player_id === state.playerId) tr.className = "me";
+    if (row.me === true) tr.className = "me";
     const score = lbTab === "today" ? row.day_r : lbTab === "average" ? row.avg_r : row.total_r;
     const extra = lbTab === "today" ? "" : ` · ${row.days} ${row.days === 1 ? "dag" : "dagar"}`;
     const medal = ["🥇", "🥈", "🥉"][i] || `${i + 1}.`;
@@ -715,10 +745,15 @@ function init() {
     // klar. Dölj dem innan laddningen i stället.
     $("controls").classList.add("hidden");
     loadRound(ROUNDS - 1, false).then((ok) => {   // sista charten fullt utspelad bakom summeringen
-      if (!ok) return;
-      const last = d.rounds[ROUNDS - 1];
-      const stopLevel = last.choice === "long" ? ENTRY - last.stopPct : ENTRY + last.stopPct;
-      drawChart(puzzle.o.length, stopShapes(last.choice, stopLevel));
+      // Summeringen byggs helt av localStorage och får aldrig hänga på att
+      // sista pusslet går att hämta. Offline (eller efter en trasig deploy)
+      // ska spelaren fortfarande se dagens resultat, streak och delningsknapp;
+      // loadRound har redan visat ett begripligt fel i chartytan.
+      if (ok) {
+        const last = d.rounds[ROUNDS - 1];
+        const stopLevel = last.choice === "long" ? ENTRY - last.stopPct : ENTRY + last.stopPct;
+        drawChart(puzzle.o.length, stopShapes(last.choice, stopLevel));
+      }
       showDaySummary();
     });
   } else {

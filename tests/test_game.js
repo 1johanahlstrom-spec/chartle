@@ -69,6 +69,17 @@ test("skräpindex ger alltid ett giltigt pussel, aldrig NaN", () => {
   }
 });
 
+test("pussel-URL:en är versionsstämplad så cachen kan invalideras", () => {
+  // Caddy cachar /puzzles/* som immutable och service workern cache-first.
+  // Utan versionsparameter skulle en lagad pusselfil aldrig nå installerade
+  // klienter, hur många deployer som helst.
+  assert.match(String(game.PUZZLE_VERSION), /^\d+$/);
+  assert.strictEqual(game.puzzleUrl(0), `puzzles/0.json?v=${game.PUZZLE_VERSION}`);
+  // Samma modulo-skydd som puzzleFileIndex: skräp och årsvarvning.
+  assert.strictEqual(game.puzzleUrl(TOTAL_PUZZLES), `puzzles/0.json?v=${game.PUZZLE_VERSION}`);
+  assert.strictEqual(game.puzzleUrl(NaN), `puzzles/0.json?v=${game.PUZZLE_VERSION}`);
+});
+
 test("pusselkontraktet validerar alla serier och candles", () => {
   const valid = makePuzzle([{ o: 101, h: 103, l: 99, c: 102 }]);
   valid.v = Array(valid.o.length).fill(10);
@@ -238,6 +249,16 @@ test("statistiken överlever att state.days städas bort", () => {
   assert.strictEqual(game.statsSummary(stats).avgR, 5);
 });
 
+test("streaken visas som noll direkt när en dag missats", () => {
+  // 8 = idag. Spelade man i förrgår (6) är gårdagen missad och streaken bruten
+  // redan nu — inte först när dag 8 spelas klart.
+  assert.strictEqual(game.visibleStreak(4, 6, 8), 0);
+  assert.strictEqual(game.visibleStreak(4, 7, 8), 4);      // igår = kan fortsätta
+  assert.strictEqual(game.visibleStreak(4, 8, 8), 4);      // dagen redan klar
+  assert.strictEqual(game.visibleStreak(4, undefined, 8), 4); // äldre state
+  assert.strictEqual(game.visibleStreak(-3, 7, 8), 0);
+});
+
 test("korrupt men giltig JSON-state återställs utan uppstartskrasch", () => {
   for (const raw of [null, "text", [], 42]) {
     assert.deepStrictEqual(game.sanitizeStoredState(raw), {});
@@ -247,6 +268,30 @@ test("korrupt men giltig JSON-state återställs utan uppstartskrasch", () => {
   assert.strictEqual(cleaned.totalR, 0);
   assert.strictEqual(cleaned.streak, 0);
   assert.strictEqual(cleaned.stats, undefined);
+});
+
+test("sanitizeStoredState kastar bort trasig spelarinfo och statistik", () => {
+  const cleaned = game.sanitizeStoredState({
+    days: { abc: { rounds: [] }, "-1": { rounds: [] }, 1: { rounds: [] } },
+    lastPlayedDay: "igår",
+    playerId: "inte-ett-uuid",
+    playerName: "   ",
+    stats: { ...game.emptyStats(), bestDay: "x" },
+  });
+  assert.deepStrictEqual(cleaned.days, { 1: { rounds: [] } });
+  assert.strictEqual(cleaned.lastPlayedDay, undefined);
+  assert.strictEqual(cleaned.playerId, undefined);
+  assert.strictEqual(cleaned.playerName, undefined);
+  assert.strictEqual(cleaned.stats, undefined);
+
+  const valid = game.sanitizeStoredState({
+    lastPlayedDay: 3,
+    playerId: "11111111-1111-4111-8111-111111111111",
+    playerName: "Ada",
+  });
+  assert.strictEqual(valid.lastPlayedDay, 3);
+  assert.strictEqual(valid.playerId, "11111111-1111-4111-8111-111111111111");
+  assert.strictEqual(valid.playerName, "Ada");
 });
 
 // --- 5. MA läcker inte framtiden --------------------------------------------------

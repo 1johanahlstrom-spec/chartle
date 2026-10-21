@@ -14,10 +14,20 @@ egenhostat Python/SQLite-API för leaderboarden. Full beskrivning i README.md.
 - `compose.yaml` + `Caddyfile` — egenhostad drift på localhost:8137; Tailscale
   Funnel publicerar porten med HTTPS på Funnel-port 10000.
 - Epoch: 2026-07-05 = Chartle #1. Runda r på dag d laddar
-  `puzzles/{(d*5 + r) % 1825}.json`. Ändra ALDRIG epoch eller pusselordningen
-  efter lansering — då får spelare om-numrerade/upprepade pussel.
-  `build_puzzles.py` vägrar därför skriva över ett befintligt set utan
+  `puzzles/{(d*5 + r) % 1825}.json?v=PUZZLE_VERSION`. Ändra ALDRIG epoch eller
+  pusselordningen efter lansering — då får spelare om-numrerade/upprepade
+  pussel. `build_puzzles.py` vägrar därför skriva över ett befintligt set utan
   `CHARTLE_ALLOW_REBUILD=1`, och skriver via staging-katalog.
+- **PUZZLE_VERSION** i `docs/game.js` ingår i varje pussel-URL eftersom Caddy
+  cachar `/puzzles/*` som `immutable` och service workern cache-first. Bumpa
+  den vid varje ändring av en publicerad pusselfil, annars fortsätter
+  installerade klienter spela den gamla filen. `repair_splits.py --apply`
+  kräver `CHARTLE_ALLOW_INPLACE_REPAIR=1` och påminner om bumpen.
+- **Frontendversionen** (`?v=` i `index.html`, `APP_SHELL` och `CACHE` i
+  `service-worker.js`) måste vara samma nummer. `tests/test_contract.py`
+  vaktar det. Service workern är network-first för HTML/JS/CSS och
+  cache-first bara för pussel och vendor — annars fastnar en installerad app
+  på förra deployens kod.
 - **Dygnsgränsen är Europe/Stockholm**, inte klientens lokala tid. Både
   `docs/game.js` (`stockholmDayIndex`) och `server/app.py`
   (`current_puzzle_no`) räknar så — ändras den ena måste den andra följa med.

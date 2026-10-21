@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime
+import ipaddress
 import json
 import math
 import os
@@ -153,6 +154,54 @@ def reject_constant(value: str) -> float:
     raise ValueError(f"Ogiltigt värde: {value}")
 
 
+def resolve_client_ip(x_real_ip: str | None, peer: str) -> str:
+    """Klientadressen som Caddy skickade, annars socketens peer.
+
+    Caddy sätter X-Real-IP från {client_ip} (se Caddyfile), som i sin tur
+    plockar fram den riktiga klienten ur Tailscale Funnels X-Forwarded-For.
+    Värdet är extern indata: en trasig sträng får aldrig bli en egen
+    rate-limit-hink, och en klient får inte kunna välja den själv.
+    """
+    if x_real_ip:
+        try:
+            return str(ipaddress.ip_address(x_real_ip.strip()))
+        except ValueError:
+            pass
+    return peer
+
+
+def requested_player_id(headers) -> str | None:
+    """Valfritt spelar-ID från X-Player-Id, för att markera "jag" i listan.
+
+    ID:t skickas som header i stället för query-parameter så att det inte
+    hamnar i åtkomstloggar. Ett ogiltigt värde ignoreras: då visas listan
+    bara utan markering, i stället för att hela anropet faller.
+    """
+    raw = headers.get("X-Player-Id")
+    if not raw:
+        return None
+    try:
+        return str(uuid.UUID(raw.strip()))
+    except (AttributeError, ValueError):
+        return None
+
+
+def public_rows(rows, me_id: str | None) -> list[dict]:
+    """Ta bort player_id ur API-svaret och markera den egna raden i stället.
+
+    player_id är spelarens hemliga nyckel: den som känner till den kan skicka
+    in poäng i spelarens namn. Listan behöver den bara för att kunna visa
+    "det här är du", och det avgörs här på servern.
+    """
+    result = []
+    for row in rows:
+        item = dict(row)
+        player_id = item.pop("player_id")
+        item["me"] = me_id is not None and player_id == me_id
+        result.append(item)
+    return result
+
+
 def clean_score(payload: object) -> tuple[int, str, str, float]:
     if not isinstance(payload, dict):
         raise ValueError("JSON-objekt krävs")
@@ -200,7 +249,9 @@ def insert_score(payload: object, db_path: Path = DB_PATH) -> None:
         )
 
 
-def today_leaderboard(day: int, limit: int, db_path: Path = DB_PATH) -> list[dict]:
+def today_leaderboard(
+    day: int, limit: int, db_path: Path = DB_PATH, me_id: str | None = None
+) -> list[dict]:
     with database(db_path) as db:
         rows = db.execute(
             """
@@ -212,7 +263,7 @@ def today_leaderboard(day: int, limit: int, db_path: Path = DB_PATH) -> list[dic
             """,
             (day, limit),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return public_rows(rows, me_id)
 
 
 # Båda listorna räknar på samma rullande fönster: en enskild lyckoträff ska
@@ -232,7 +283,10 @@ _LEADERBOARD_ORDER = {
 
 
 def window_leaderboard(
-    limit: int, db_path: Path = DB_PATH, order: str = "total"
+    limit: int,
+    db_path: Path = DB_PATH,
+    order: str = "total",
+    me_id: str | None = None,
 ) -> list[dict]:
     """Ställning över de senaste LEADERBOARD_WINDOW_DAYS dagarna.
 
@@ -269,15 +323,19 @@ def window_leaderboard(
             """,
             params,
         ).fetchall()
-    return [dict(row) for row in rows]
+    return public_rows(rows, me_id)
 
 
-def total_leaderboard(limit: int, db_path: Path = DB_PATH) -> list[dict]:
-    return window_leaderboard(limit, db_path, "total")
+def total_leaderboard(
+    limit: int, db_path: Path = DB_PATH, me_id: str | None = None
+) -> list[dict]:
+    return window_leaderboard(limit, db_path, "total", me_id)
 
 
-def average_leaderboard(limit: int, db_path: Path = DB_PATH) -> list[dict]:
-    return window_leaderboard(limit, db_path, "average")
+def average_leaderboard(
+    limit: int, db_path: Path = DB_PATH, me_id: str | None = None
+) -> list[dict]:
+    return window_leaderboard(limit, db_path, "average", me_id)
 
 
 class RateLimiter:
@@ -316,8 +374,11 @@ class ChartleHandler(BaseHTTPRequestHandler):
         self.connection.settimeout(SOCKET_TIMEOUT)
 
     def client_ip(self) -> str:
-        # Bakom Caddy är client_address alltid proxyns IP — se Caddyfile.
-        return self.headers.get("X-Real-IP") or self.client_address[0]
+        # Bakom Caddy är client_address proxyns IP. Caddy sätter X-Real-IP
+        # till den riktiga klienten — se trusted_proxies i Caddyfile.
+        return resolve_client_ip(
+            self.headers.get("X-Real-IP"), self.client_address[0]
+        )
 
     def send_json(self, status: int, body: object) -> None:
         data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()
@@ -332,6 +393,7 @@ class ChartleHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
+        me_id = requested_player_id(self.headers)
         try:
             if parsed.path == "/api/health":
                 healthy = database_healthy()
@@ -339,16 +401,24 @@ class ChartleHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/leaderboard/today":
                 day = positive_int(query, "day")
-                self.send_json(200, today_leaderboard(day, row_limit(query)))
+                self.send_json(
+                    200, today_leaderboard(day, row_limit(query), me_id=me_id)
+                )
                 return
             if parsed.path == "/api/leaderboard/total":
-                self.send_json(200, total_leaderboard(row_limit(query)))
+                self.send_json(200, total_leaderboard(row_limit(query), me_id=me_id))
                 return
             if parsed.path == "/api/leaderboard/average":
-                self.send_json(200, average_leaderboard(row_limit(query)))
+                self.send_json(200, average_leaderboard(row_limit(query), me_id=me_id))
                 return
         except ValueError as error:
             self.send_json(400, {"error": str(error)})
+            return
+        except (OSError, sqlite3.Error) as error:
+            # En låst eller trasig databas ska bli ett tydligt 503, inte en
+            # stack trace och en stängd anslutning utan svar.
+            print(f"Databasfel vid GET {parsed.path}: {error}", flush=True)
+            self.send_json(503, {"error": "Databasen är inte tillgänglig"})
             return
         self.send_json(404, {"error": "Hittades inte"})
 
@@ -373,6 +443,10 @@ class ChartleHandler(BaseHTTPRequestHandler):
             return
         except sqlite3.IntegrityError:
             self.send_json(409, {"error": "Poängen är redan inskickad"})
+            return
+        except (OSError, sqlite3.Error) as error:
+            print(f"Databasfel vid POST /api/scores: {error}", flush=True)
+            self.send_json(503, {"error": "Databasen är inte tillgänglig"})
             return
         self.send_json(201, {"status": "created"})
 

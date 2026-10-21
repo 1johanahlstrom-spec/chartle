@@ -66,7 +66,11 @@ Nås också från knappen "Träna på ett slumpat chart" i dagssummeringen.
 
 ### Installera som app
 
-Chartle har ett webbappmanifest, en egen ikon och offline-stöd. På Firefox för
+Chartle har ett webbappmanifest, en egen ikon och offline-stöd. Service workern
+hämtar HTML, egen JS/CSS och manifestet från nätet först (cachen är reserv när
+nätet är borta), medan pussel och Plotly som är oföränderliga cachas först. Då
+slår en deploy igenom direkt i en installerad app i stället för att fastna på
+förra versionens `app.js`. På Firefox för
 Android: öppna Chartle över HTTPS, välj menyn och tryck **Installera** eller
 **Lägg till på startskärmen**. På Firefox för Windows 143 eller senare finns
 webbappsknappen i adressfältet. Lokal utveckling på `localhost` fungerar också,
@@ -93,11 +97,21 @@ Generatorns mål är 750 long / 450 short / 625 avstå. Det publicerade setet ä
 felaktigt short-facit till long. Nästa generation förbjuder dessutom överlapp
 mellan 70-dagarsfönster från samma ticker.
 
+**Publicerade pussel är oföränderliga.** Caddy cachar `/puzzles/*` i ett år som
+`immutable` och service workern använder cache-first för samma filer. Ändrar du
+en pusselfil — med `repair_splits.py` eller en ombyggnad — måste du därför
+bumpa `PUZZLE_VERSION` i `docs/game.js` (och frontendversionen ovan) så att
+URL:en blir ny. `repair_splits.py --apply` vägrar annars utan
+`CHARTLE_ALLOW_INPLACE_REPAIR=1` och skriver ut exakt vad som ska bumpas.
+
 ## Hur det funkar
 
 - **Dagens pussel**: `dayIndex = dagar sedan 2026-07-05` (epoch = Chartle #1),
-  runda r laddar `puzzles/{(dayIndex*5 + r) % 1825}.json`. Samma för alla,
-  ingen server behövs för själva spelet.
+  runda r laddar `puzzles/{(dayIndex*5 + r) % 1825}.json?v=N`, där `N` är
+  `PUZZLE_VERSION` i `docs/game.js`. Samma för alla, ingen server behövs för
+  själva spelet. Versionen i URL:en är det som gör att en lagad pusselfil når
+  installerade klienter trots att både Caddy och service workern cachat den
+  hårt.
 - **Dygnet bryts vid midnatt i Europe/Stockholm**, inte i enhetens lokala tid.
   Annars skulle spelare i olika tidszoner få olika pussel samma dag och
   leaderboardens "idag" blanda ihop kalenderdygn. Servern räknar dagen på
@@ -151,6 +165,14 @@ emot ett tal. Det finns spärrar mot de billiga attackerna (poängtak ±300R,
 dagen måste ha inträffat, 10 inskick per timme och IP, ett resultat per spelare
 och dag), men den som vill fuska kan fortfarande göra det.
 
+Rate limitingen kräver att API:t ser den riktiga klientadressen. Tailscale
+Funnel skickar den i `X-Forwarded-For`; Caddy har `trusted_proxies` för
+loopback/Tailscale och sätter `X-Real-IP` från `{client_ip}`. Utan den kedjan
+skulle alla spelare dela på samma kvot. Verifiera gärna med två olika
+utgående adresser efter en deploy — 429 ska slå till per klient, inte globalt.
+Listorna skickar aldrig ut spelarens UUID; servern markerar i stället den egna
+raden med `"me": true` utifrån `X-Player-Id`.
+
 Poängtaket är **härlett ur pusseldatan, inte gissat**: R-multipeln har ingen
 övre gräns eftersom nämnaren är stoppavståndet, och ett 2 %-stopp på
 GME-squeezen 2021-02-23 ger +224,5R på en enda runda. Perfekt spel ger som
@@ -199,9 +221,11 @@ docker compose up -d --build
 ```
 
 Releasekontroll: kör `./tests/run.sh`, kontrollera `docker compose config`, ta
-en databasbackup, bumpa `?v=` och service-worker-cachen vid frontendändringar,
-deploya och verifiera `/api/health`. Containerbilder och GitHub Actions är låsta
-till digest/SHA; Dependabot föreslår månatliga uppdateringar.
+en databasbackup, bumpa `?v=` i `docs/index.html` **och** `CACHE`/`APP_SHELL` i
+`docs/service-worker.js` till samma nummer vid frontendändringar, deploya och
+verifiera `/api/health`. `tests/test_contract.py` failar om versionerna glider
+isär. Containerbilder och GitHub Actions är låsta till digest/SHA; Dependabot
+föreslår månatliga uppdateringar.
 
 ### Backup av databasen
 

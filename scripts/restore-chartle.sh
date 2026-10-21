@@ -24,9 +24,72 @@ REPOROT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPOROT"
 STAMP="$(date +%F-%H%M%S)"
 
-docker compose stop api
-docker compose run --rm --no-deps -v "$KALLA:/restore.db:ro" api python -c \
-  "import os, sqlite3; target='/data/chartle.db'; temp=target+'.restore'; [os.remove(p) for p in (temp, target, target+'-wal', target+'-shm') if os.path.exists(p)]; source=sqlite3.connect('file:/restore.db?mode=ro', uri=True); destination=sqlite3.connect(temp); source.backup(destination); destination.close(); source.close(); os.replace(temp, target)"
-docker compose start api
+# API:t måste tillbaka även om återställningen misslyckas mitt i — annars står
+# hela spelet utan leaderboard tills någon tittar till servern.
+RESTARTED=0
+cleanup() {
+  if [[ "$RESTARTED" -eq 1 ]]; then
+    docker compose start api >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
-echo "Återställning klar $STAMP. Kontrollera: curl http://127.0.0.1:8137/api/health"
+docker compose stop api
+RESTARTED=1
+
+# Skriv till en temp-fil och verifiera den INNAN den nuvarande databasen rörs.
+# Den gamla versionen raderade /data/chartle.db först och hade därför kunnat
+# lämna servern utan databas om backupen visade sig vara trasig.
+docker compose run --rm --no-deps -T -v "$KALLA:/restore.db:ro" api python - <<'PY'
+import os
+import sqlite3
+
+target = "/data/chartle.db"
+temp = target + ".restore"
+for path in (temp, temp + "-wal", temp + "-shm"):
+    if os.path.exists(path):
+        os.remove(path)
+
+source = sqlite3.connect("file:/restore.db?mode=ro", uri=True)
+destination = sqlite3.connect(temp)
+try:
+    source.backup(destination)
+finally:
+    destination.close()
+    source.close()
+
+check = sqlite3.connect(temp)
+try:
+    result = check.execute("PRAGMA integrity_check").fetchone()[0]
+    if result != "ok":
+        raise SystemExit(f"FEL: den återställda kopian är trasig: {result}")
+    count = check.execute("SELECT count(*) FROM scores").fetchone()[0]
+finally:
+    check.close()
+
+# WAL/SHM tillhör den GAMLA databasen. Ligger de kvar när den nya filen byts
+# in kan SQLite försöka spela upp gamla transaktioner mot fel databas.
+for suffix in ("-wal", "-shm"):
+    path = target + suffix
+    if os.path.exists(path):
+        os.remove(path)
+os.replace(temp, target)
+print(f"Återställde {count} resultat")
+PY
+
+docker compose start api
+RESTARTED=0
+trap - EXIT
+
+PORT="${CHARTLE_PORT:-8137}"
+for _ in $(seq 1 30); do
+  if curl --fail --silent --show-error "http://127.0.0.1:${PORT}/api/health" >/dev/null; then
+    echo "Återställning klar $STAMP. API:t svarar på /api/health."
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "FEL: API:t svarar inte efter återställningen. Loggar:" >&2
+docker compose logs api >&2
+exit 1

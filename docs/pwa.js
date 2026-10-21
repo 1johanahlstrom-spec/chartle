@@ -8,7 +8,9 @@ if ("serviceWorker" in navigator) {
         if (!window.ChartleGame) return;
         const day = ChartleGame.stockholmDayIndex();
         const urls = Array.from({ length: ChartleGame.ROUNDS }, (_, round) =>
-          `puzzles/${ChartleGame.puzzleFileIndex(day * ChartleGame.ROUNDS + round)}.json`);
+          // Samma URL-byggare som app.js — annars kunde förhämtningen och
+          // själva laddningen peka på olika pusselsetversioner.
+          ChartleGame.puzzleUrl(day * ChartleGame.ROUNDS + round));
         registration.active?.postMessage({ type: "CACHE_PUZZLES", urls });
       })
       .catch((error) => console.warn("Kunde inte aktivera offline-stöd:", error));

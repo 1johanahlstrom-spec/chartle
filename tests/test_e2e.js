@@ -16,9 +16,9 @@ const BASE = process.env.CHARTLE_URL || "http://127.0.0.1:8137";
 const problems = [];
 const log = (...a) => console.log(...a);
 
-function watch(page, label) {
+function watch(page, label, expectErrors = label === "404") {
   // "404"-sidan matar avsiktligt fram fel — där är felen själva testet.
-  const expectErrors = label === "404";
+  // Offline-scenariot gör samma sak och markerar det med expectErrors=true.
   page.on("console", (m) => {
     const t = m.text();
     if (expectErrors && !/Refused to|Content Security Policy/i.test(t)) return;
@@ -358,6 +358,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return tiles;
   });
   if (legacy !== 6) problems.push(`Statistik efter migrering visade ${legacy} rutor, väntade 6`);
+
+  // ---- 10. Färdigspelad dag utan nät: summeringen måste ändå visas ----
+  // Det lokala resultatet finns redan i localStorage. Att sista pusslet inte
+  // går att hämta får aldrig gömma dagens poäng, streak eller delningsknapp.
+  const offline = await browser.newPage();
+  watch(offline, "offline", true);
+  await offline.setBypassServiceWorker(true);
+  await offline.setRequestInterception(true);
+  offline.on("request", (r) =>
+    r.url().includes("/puzzles/") ? r.respond({ status: 404, body: "nope" }) : r.continue());
+  await offline.goto(BASE, { waitUntil: "domcontentloaded" });
+  await offline.evaluate(() => {
+    const round = (choice, r) => ({ choice, stopPct: 5, r, stopped: false, ticker: "TEST", year: 2020 });
+    const today = ChartleGame.stockholmDayIndex();
+    localStorage.setItem("chartle", JSON.stringify({
+      v: 3,
+      totalR: 5,
+      streak: 2,
+      lastPlayedDay: today,
+      playerId: "11111111-1111-4111-8111-111111111111",
+      playerName: "Offline",
+      days: {
+        [today + 1]: {
+          rounds: [round("long", 1), round("pass", 0), round("short", 1),
+                   round("pass", 0), round("long", 3)],
+          submitted: true,
+        },
+      },
+    }));
+  });
+  await offline.goto(BASE, { waitUntil: "networkidle0" });
+  await offline.waitForSelector("#day-summary:not(.hidden)", { timeout: 10000 });
+  const offlineSummary = await offline.evaluate(() => ({
+    emoji: document.querySelector("#summary-emoji").textContent,
+    total: document.querySelector("#summary-r").textContent,
+    chartError: document.querySelector("#chart").textContent.includes("Kunde inte ladda"),
+    streak: document.querySelector("#streak").textContent,
+  }));
+  log("\n10. Färdig dag offline:", JSON.stringify(offlineSummary));
+  if (offlineSummary.emoji.split(" ").filter(Boolean).length !== 5)
+    problems.push("Offline-summeringen visar inte alla fem rundor");
+  if (offlineSummary.total !== "+5.0R")
+    problems.push(`Offline-summeringen visar ${offlineSummary.total}, väntade +5.0R`);
+  if (!offlineSummary.chartError) problems.push("Offline-pusslet gav inget felmeddelande");
+  if (!offlineSummary.streak.includes("2")) problems.push("Streaken försvann i offline-summeringen");
 
   await browser.close();
 

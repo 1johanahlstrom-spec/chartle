@@ -47,6 +47,49 @@ class CrossLanguageContractTest(unittest.TestCase):
         source = (ROOT / "pipeline" / "build_puzzles.py").read_text(encoding="utf-8")
         self.assertRegex(source, r"MIN_GAP\s*=\s*WINDOW")
 
+    def test_frontend_assets_and_service_worker_share_a_version(self):
+        """?v= i index.html, APP_SHELL och CACHE måste bumpas tillsammans.
+
+        Service workern kan annars installera en blandning av gammal och ny
+        kod, och en glömd bump är osynlig tills något går sönder i produktion.
+        """
+        docs = ROOT / "docs"
+        html = (docs / "index.html").read_text(encoding="utf-8")
+        worker = (docs / "service-worker.js").read_text(encoding="utf-8")
+
+        html_versions = set(re.findall(r"\?v=(\d+)", html))
+        self.assertEqual(len(html_versions), 1, f"blandade versioner i index.html: {html_versions}")
+        shell_versions = set(re.findall(r"\?v=(\d+)", worker))
+        self.assertEqual(shell_versions, html_versions)
+        cache_version = re.search(r'const CACHE = "chartle-v(\d+)"', worker)
+        self.assertIsNotNone(cache_version)
+        self.assertEqual({cache_version.group(1)}, html_versions)
+
+    def test_puzzle_urls_are_versioned_everywhere(self):
+        """En lagad pusselfil får aldrig serveras under en gammal cache-URL."""
+        game = (ROOT / "docs" / "game.js").read_text(encoding="utf-8")
+        app = (ROOT / "docs" / "app.js").read_text(encoding="utf-8")
+        pwa = (ROOT / "docs" / "pwa.js").read_text(encoding="utf-8")
+        self.assertRegex(game, r"const PUZZLE_VERSION = \d+;")
+        self.assertRegex(game, r"function puzzleUrl\(raw\)")
+        self.assertIn("puzzleUrl(fileIndexFor(round))", app)
+        self.assertIn("ChartleGame.puzzleUrl", pwa)
+
+    def test_caddy_forwarding_and_vendor_exemption(self):
+        """Funnel-adressen får inte kollapsa rate limitingen till en hink."""
+        caddy = (ROOT / "Caddyfile").read_text(encoding="utf-8")
+        self.assertIn("trusted_proxies", caddy)
+        self.assertIn("header_up X-Real-IP {client_ip}", caddy)
+        # @code får inte skriva över den hårda cachen för /vendor/*.js.
+        code_block = re.search(r"@code \{(.*?)\}", caddy, re.S)
+        self.assertIsNotNone(code_block)
+        self.assertIn("not path /vendor/*", code_block.group(1))
+
+    def test_repair_script_requires_a_puzzle_version_bump(self):
+        repair = (ROOT / "pipeline" / "repair_splits.py").read_text(encoding="utf-8")
+        self.assertIn("CHARTLE_ALLOW_INPLACE_REPAIR", repair)
+        self.assertIn("PUZZLE_VERSION", repair)
+
     def test_service_worker_prefetches_daily_puzzles(self):
         worker = (ROOT / "docs" / "service-worker.js").read_text(encoding="utf-8")
         client = (ROOT / "docs" / "pwa.js").read_text(encoding="utf-8")

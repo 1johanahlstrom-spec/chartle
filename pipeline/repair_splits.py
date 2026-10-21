@@ -19,12 +19,22 @@ Vanlig volatilitet i MARA/GME/AMC ligger på 1.2-1.5 och rörs inte.
 import argparse
 import base64
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
 VISIBLE = 60
 ROOT = Path(__file__).resolve().parent.parent
 PUZZLE_DIR = ROOT / "docs" / "puzzles"
+GAME_JS = ROOT / "docs" / "game.js"
+
+
+def current_puzzle_version() -> str:
+    match = re.search(r"const PUZZLE_VERSION = (\d+);", GAME_JS.read_text(encoding="utf-8"))
+    if not match:
+        sys.exit("Hittar inte PUZZLE_VERSION i docs/game.js")
+    return match.group(1)
 
 # (pusselindex, första dagen EFTER spliten, splitkvot). Verifierade för hand:
 # båda ligger på kvot ~2.00 i en storbolagsaktie, i en era där Yahoos
@@ -89,6 +99,21 @@ def main() -> None:
 
     if not PUZZLE_DIR.is_dir():
         sys.exit(f"Hittar inte {PUZZLE_DIR}")
+
+    version = current_puzzle_version()
+    if args.apply:
+        # Pussel-URL:erna cachas som immutable (Caddy) och cache-first (service
+        # workern). Att skriva om en fil på plats utan att bumpa versionen gör
+        # att installerade klienter fortsätter spela den gamla filen i evighet.
+        if os.environ.get("CHARTLE_ALLOW_INPLACE_REPAIR") != "1":
+            sys.exit(
+                "AVBRYTER: det här ändrar redan publicerade pusselfiler.\n"
+                f"1. Bumpa PUZZLE_VERSION i docs/game.js (nu {version}).\n"
+                "2. Bumpa CACHE och ?v= i docs/service-worker.js + docs/index.html.\n"
+                "3. Kör om med CHARTLE_ALLOW_INPLACE_REPAIR=1.\n"
+                "Utan det fortsätter gamla webbläsare att använda den gamla filen."
+            )
+        print(f"Pusselsetversion efter reparation: {version} (URL: ?v={version})")
 
     print("Reparerar pussel med missad split:" if args.apply else "TORRKÖRNING (--apply skriver):")
     changed = sum(repair(i, d, r, args.apply) for i, d, r in KNOWN_MISSED_SPLITS)
